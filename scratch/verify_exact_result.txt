@@ -1,0 +1,5 @@
+Checking for EXACT match of forbidden keywords in global_keywords:
+No exact matches of forbidden keywords in global_keywords.
+
+Checking for EXACT match of forbidden keywords inside meeting keywords:
+No exact matches of forbidden keywords in any meetings. Perfect!

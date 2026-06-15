@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <script>
+    window.onerror = function(message, source, lineno, colno, error) {
+      alert("🚨 전역 에러 감지!\n\n메시지: " + message + "\n출처: " + source + "\n라인: " + lineno + "\n에러객체: " + (error ? error.stack : "없음"));
+      return false;
+    };
+  </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>제22대 국회 과학기술정보방송통신위원회 회의록 대시보드</title>
+  <meta name="description" content="제22대 국회 과학기술정보방송통신위원회 회의록을 분석한 인터랙티브 대시보드. 회의록 요약, 발언자 키워드, 키워드 탐색기, 달력 뷰를 제공합니다." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" />
+  <link rel="stylesheet" href="style.css?v=4.0" />
+</head>
+<body>
+
+<!-- ==================== HEADER ==================== -->
+<header class="app-header" id="app-header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="8" fill="url(#grad1)"/>
+          <path d="M7 14h14M7 9h14M7 19h10" stroke="white" stroke-width="2" stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="grad1" x1="0" y1="0" x2="28" y2="28">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#8b5cf6"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-title">국회 회의록 분석 Dashboard</span>
+        <span class="brand-sub">제22대 · 과학기술정보방송통신위원회</span>
+      </div>
+    </div>
+    
+    <div class="header-update-time" id="header-update-time">
+      마지막 업데이트: 대기 중...
+    </div>
+
+    <div class="header-stats" id="header-stats">
+      <div class="stat-pill" id="stat-total">
+        <span class="stat-num">—</span>
+        <span class="stat-label">총 회의록</span>
+      </div>
+      <div class="stat-pill" id="stat-speakers">
+        <span class="stat-num">—</span>
+        <span class="stat-label">발언자</span>
+      </div>
+      <div class="stat-pill" id="stat-keywords">
+        <span class="stat-num">—</span>
+        <span class="stat-label">고유 키워드</span>
+      </div>
+    </div>
+    
+    <button class="theme-toggle" id="theme-toggle" title="테마 전환">
+      <svg id="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+        <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+      </svg>
+      <svg id="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<!-- ==================== NAV TABS ==================== -->
+<nav class="tab-nav" id="tab-nav">
+  <button class="tab-btn active" data-tab="summary" id="tab-summary">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/>
+      <line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/>
+    </svg>
+    회의록 요약
+  </button>
+  <button class="tab-btn" data-tab="keywords" id="tab-keywords">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    키워드 탐색기
+  </button>
+  <button class="tab-btn" data-tab="speakers" id="tab-speakers">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+    발언자 분석
+  </button>
+  <button class="tab-btn" data-tab="calendar" id="tab-calendar">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+    달력 뷰
+  </button>
+</nav>
+
+<!-- ==================== MAIN CONTENT ==================== -->
+<main class="main-content" id="main-content">
+
+  <!-- Loading -->
+  <div class="loading-screen" id="loading-screen">
+    <div class="loading-spinner"></div>
+    <p class="loading-text">회의록 데이터 불러오는 중...</p>
+    <p class="loading-sub" id="loading-sub">meetings.json을 읽고 있습니다.</p>
+  </div>
+
+  <!-- Error -->
+  <div class="error-screen hidden" id="error-screen">
+    <div class="error-icon">⚠️</div>
+    <h2>데이터 로드 실패</h2>
+    <p id="error-msg">meetings.json 파일을 찾을 수 없습니다.</p>
+    <p class="error-hint">parse_pdfs.py 스크립트를 먼저 실행하여 데이터를 생성해주세요.</p>
+    <pre id="error-cmd">python parse_pdfs.py</pre>
+  </div>
+
+  <!-- ============ TAB: 회의록 요약 ============ -->
+  <section class="tab-content active" id="tab-content-summary">
+    <!-- 총괄표 패널 추가 -->
+    <div class="dashboard-overview-panel" id="dashboard-overview-panel">
+      <div class="overview-panel-title">🏛️ 제22대 과방위 입법 회의 총괄 상황판 (Overview Panel)</div>
+      <div class="overview-stats-grid">
+        <div class="ov-stat-card active-all" id="ov-card-total" style="--accent-glow: #6366f1;">
+          <div class="ov-stat-val" id="ov-val-total">—</div>
+          <div class="ov-stat-label">총 회의 건수</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-plenary" style="--accent-glow: #6366f1;">
+          <div class="ov-stat-val" id="ov-val-plenary">—</div>
+          <div class="ov-stat-label">전체회의</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-audit" style="--accent-glow: #f59e0b;">
+          <div class="ov-stat-val" id="ov-val-audit">—</div>
+          <div class="ov-stat-label">국정감사</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-it-sub" style="--accent-glow: #10b981;">
+          <div class="ov-stat-val" id="ov-val-it-sub">—</div>
+          <div class="ov-stat-label">정통방소위</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-st-sub" style="--accent-glow: #06b6d4;">
+          <div class="ov-stat-val" id="ov-val-st-sub">—</div>
+          <div class="ov-stat-label">과기원자력소위</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-budget-sub" style="--accent-glow: #ec4899;">
+          <div class="ov-stat-val" id="ov-val-budget-sub">—</div>
+          <div class="ov-stat-label">예산소위</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-agenda-sub" style="--accent-glow: #8b5cf6;">
+          <div class="ov-stat-val" id="ov-val-agenda-sub">—</div>
+          <div class="ov-stat-label">안건조정위</div>
+        </div>
+        <div class="ov-stat-card" id="ov-card-etc-sub" style="--accent-glow: #eab308;">
+          <div class="ov-stat-val" id="ov-val-etc-sub">—</div>
+          <div class="ov-stat-label">청원소위/기타</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title-area">
+        <h1>회의록 요약</h1>
+        <p class="section-desc">회의별 주요 내용과 핵심 정보를 확인하세요</p>
+      </div>
+      <div class="section-controls">
+        <!-- 상단 검색창 -->
+        <div class="search-box">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="summary-search" placeholder="회의명, 날짜, 키워드 검색..." autocomplete="off" />
+          <button class="clear-btn" id="summary-search-clear" title="지우기">×</button>
+        </div>
+        
+        <!-- 필터 및 제어 바 -->
+        <div class="filter-row">
+          <!-- 뷰 토글 및 정렬 -->
+          <div class="view-controls">
+            <div class="view-toggle-group">
+              <button class="view-toggle-btn active" id="view-grid-btn" title="그리드 뷰">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                </svg>
+              </button>
+              <button class="view-toggle-btn" id="view-list-btn" title="리스트 뷰">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                  <circle cx="4" cy="6" r="1.2"/><circle cx="4" cy="12" r="1.2"/><circle cx="4" cy="18" r="1.2"/>
+                </svg>
+              </button>
+            </div>
+            <select id="sort-select" class="sort-select">
+              <option value="date-desc">날짜 최신순</option>
+              <option value="date-asc">날짜 오래된순</option>
+              <option value="speakers-desc">발언자 많은순</option>
+              <option value="length-desc">본문 글자수순</option>
+            </select>
+          </div>
+
+          <!-- 날짜 범위 필터 -->
+          <div class="date-range-filter">
+            <input type="date" id="filter-start-date" class="filter-select" title="시작일" />
+            <span class="date-range-sep">~</span>
+            <input type="date" id="filter-end-date" class="filter-select" title="종료일" />
+          </div>
+
+          <!-- 기존 분류 필터들 -->
+          <select id="filter-year" class="filter-select">
+            <option value="">전체 연도</option>
+          </select>
+          <select id="filter-type" class="filter-select">
+            <option value="">전체 유형</option>
+            <option value="전체회의">전체회의</option>
+            <option value="정보통신방송소위">정보통신방송소위</option>
+            <option value="과학기술원자력소위">과학기술원자력소위</option>
+            <option value="예산결산소위">예산결산소위</option>
+            <option value="국정감사">국정감사</option>
+            <option value="안건조정위원회">안건조정위원회</option>
+            <option value="청원심사소위">청원심사소위</option>
+          </select>
+          <select id="filter-session" class="filter-select">
+            <option value="">전체 회기</option>
+          </select>
+        </div>
+        <span class="result-count" id="summary-result-count"></span>
+      </div>
+    </div>
+    <div class="card-grid" id="meeting-cards"></div>
+    <div class="load-more-wrapper">
+      <button class="load-more-btn hidden" id="load-more-btn">더 보기 <span id="load-more-count"></span></button>
+    </div>
+  </section>
+
+  <!-- ============ TAB: 발언자 분석 ============ -->
+  <section class="tab-content hidden" id="tab-content-speakers">
+    <div class="section-header">
+      <div class="section-title-area">
+        <h2>발언자 분석</h2>
+        <p class="section-desc">회의별 발언자 현황과 키워드를 분석합니다</p>
+      </div>
+      <div class="section-controls" style="display: flex; gap: 10px; align-items: center;">
+        <div class="search-box" style="margin-right: 6px;">
+          <input type="text" id="speaker-integrated-search" placeholder="의원명 또는 혼합 검색 (예: 최민희 & 방송법)..." style="padding: 6px 12px; font-size: 13px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); width: 320px;" autocomplete="off" />
+        </div>
+        <select id="speaker-meeting-select" class="filter-select wide">
+          <option value="">— 회의록 선택 —</option>
+        </select>
+      </div>
+    </div>
+    <div class="speakers-layout">
+      <div class="speaker-list-panel" id="speaker-list-panel">
+        <div class="panel-header">발언자 목록 <span class="panel-sub">클릭하면 발언 비중과 주요 키워드가 표시됩니다</span></div>
+        <div id="speaker-list"></div>
+      </div>
+      <div class="speaker-detail-panel" id="speaker-detail-panel">
+        <div class="panel-header">발언자 키워드 및 빈도</div>
+        <div id="speaker-keyword-chart-wrap">
+          <canvas id="speaker-keyword-chart"></canvas>
+        </div>
+        <div id="speaker-tag-cloud"></div>
+      </div>
+    </div>
+    <div class="speakers-overview" id="speakers-overview">
+      <div class="panel-header" id="speakers-overview-header">과방위 전체 발언 빈도 TOP 20</div>
+      <div class="chart-container-large" id="speakers-overview-chart-wrap">
+        <canvas id="speakers-bar-chart"></canvas>
+      </div>
+      <div id="speaker-search-results" style="display: none;"></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: 키워드 탐색기 ============ -->
+  <section class="tab-content hidden" id="tab-content-keywords">
+    <div class="section-header">
+      <div class="section-title-area">
+        <h2>키워드 탐색기</h2>
+        <p class="section-desc">전체 회의록에서 키워드를 탐색하고 관련 회의를 찾아보세요</p>
+      </div>
+      <div class="section-controls">
+        <button class="kw-compare-btn" id="kw-compare-btn">키워드 다중 비교 모드 켜기</button>
+      </div>
+    </div>
+    
+    <!-- 비교 모드 활성화 시 선택된 키워드 표시 바 -->
+    <div class="kw-compare-bar hidden" id="kw-compare-bar">
+      <span class="compare-bar-label">비교 키워드 (최대 2개):</span>
+      <div class="compare-tags-container" id="compare-tags-container"></div>
+      <button class="compare-reset-btn" id="compare-reset-btn">초기화</button>
+    </div>
+
+    <!-- Hero 통합 검색 섹션 -->
+    <div class="keyword-search-hero-section">
+      <div class="keyword-search-panel">
+        <div class="panel-header">지능형 입법/발언 통합 검색</div>
+        <div class="kw-search-box">
+          <input type="text" id="kw-search-input" placeholder="의원명 & 키워드 / YYYY-MM-DD / 의원명 / 키워드..." autocomplete="off" />
+          <button class="kw-search-btn" id="kw-search-btn">검색</button>
+          <div class="kw-autocomplete-list hidden" id="kw-autocomplete-list"></div>
+        </div>
+        <div class="kw-search-guide" style="font-size: 11px; color: var(--text-tertiary); margin-top: 6px; padding: 6px 10px; background: rgba(255,255,255,0.02); border-radius: 4px; line-height: 1.4;">
+          💡 <strong>[검색 팁]</strong><br>
+          • <strong>혼합 검색</strong>: 의원명 & 키워드 (예: <code>최민희 & 방송법</code>)<br>
+          • <strong>날짜 검색</strong>: 연도-월-일 (예: <code>2026-05-07</code>)<br>
+          • <strong>의원 검색</strong>: 의원명만 입력 (예: <code>최민희</code>)<br>
+          • <strong>다중 키워드 (OR)</strong>: 쉼표 나열 (예: <code>인공지능, AI</code>)
+        </div>
+        <div class="kw-popular-tags" id="kw-popular-tags"></div>
+      </div>
+    </div>
+
+    <!-- 하단 2단 메인 레이아웃 -->
+    <div class="keyword-main-layout">
+      <!-- 좌측 넓은 검색 결과창 -->
+      <div class="keyword-results-panel" style="max-height: none;">
+        <div class="panel-header">
+          <span id="kw-results-title">키워드를 클릭하거나 검색하세요</span>
+          <button id="btn-back-to-modal" class="kw-compare-btn" style="display: none; font-size: 12.5px; padding: 5px 10px; background: rgba(99, 102, 241, 0.25); border: 1px solid rgba(99, 102, 241, 0.5); border-radius: 6px; color: #a5b4fc; cursor: pointer; transition: all 0.2s; font-weight: 600; white-space: nowrap;">이전 회의록으로 돌아가기 ↩️</button>
+        </div>
+        <div id="kw-results-list"></div>
+      </div>
+
+      <!-- 우측 컴팩트 사이드바 (클라우드 & 트렌드) -->
+      <div class="keyword-sidebar-panel">
+        <!-- 컴팩트 키워드 클라우드 -->
+        <div class="keyword-cloud-panel compact">
+          <div class="panel-header">
+            주요 키워드 클라우드
+            <button class="btn-expand-cloud" id="btn-expand-cloud" title="확대해서 전체 보기">확대 ⤢</button>
+          </div>
+          <div class="keyword-cloud-wrapper" style="position: relative; overflow: hidden; max-height: 200px;">
+            <div id="keyword-cloud"></div>
+            <div class="cloud-fade-overlay"></div>
+          </div>
+        </div>
+
+        <!-- 키워드 월별 트렌드 차트 -->
+        <div class="trend-panel">
+          <div class="panel-header">
+            키워드 월별 트렌드
+            <span class="panel-sub" id="trend-keyword-label">상위 5개 키워드</span>
+          </div>
+          <div class="trend-controls">
+            <div id="trend-legend"></div>
+          </div>
+          <div class="chart-container-trend">
+            <canvas id="trend-chart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: 달력 뷰 ============ -->
+  <section class="tab-content hidden" id="tab-content-calendar">
+    <div class="section-header">
+      <div class="section-title-area">
+        <h2>달력 뷰</h2>
+        <p class="section-desc">날짜별 회의 일정과 주요 안건을 확인하세요</p>
+      </div>
+      <div class="section-controls">
+        <div class="calendar-legend">
+          <span class="legend-item" data-type="전체회의"><span class="legend-dot" style="background:#6366f1"></span>전체회의</span>
+          <span class="legend-item" data-type="국정감사"><span class="legend-dot" style="background:#f59e0b"></span>국정감사</span>
+          <span class="legend-item" data-type="정보통신방송소위"><span class="legend-dot" style="background:#10b981"></span>정통방소위</span>
+          <span class="legend-item" data-type="과학기술원자력소위"><span class="legend-dot" style="background:#06b6d4"></span>과기원자력소위</span>
+          <span class="legend-item" data-type="예산결산소위"><span class="legend-dot" style="background:#ec4899"></span>예산결산소위</span>
+          <span class="legend-item" data-type="기타"><span class="legend-dot" style="background:#8b5cf6"></span>기타</span>
+        </div>
+      </div>
+    </div>
+    <div class="calendar-layout">
+      <div class="calendar-main">
+        <div id="fullcalendar"></div>
+      </div>
+      <div class="calendar-sidebar" id="calendar-sidebar">
+        <div class="sidebar-placeholder">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+            <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          <p>날짜를 클릭하면<br/>회의 상세 정보가 표시됩니다</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ==================== MOBILE NAVIGATION TABS (STICKY BOTTOM) ==================== -->
+<div class="mobile-tab-bar" id="mobile-tab-bar">
+  <button class="mobile-tab-btn active" data-tab="summary">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/>
+      <line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/>
+    </svg>
+    <span>회의록요약</span>
+  </button>
+  <button class="mobile-tab-btn" data-tab="keywords">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <span>키워드</span>
+  </button>
+  <button class="mobile-tab-btn" data-tab="speakers">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+    </svg>
+    <span>발언자</span>
+  </button>
+  <button class="mobile-tab-btn" data-tab="calendar">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+    <span>달력</span>
+  </button>
+</div>
+
+<!-- ==================== MODAL ==================== -->
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal" id="modal">
+    <button class="modal-close" id="modal-close">×</button>
+    
+    <!-- 국회 스타일 헤더 -->
+    <div class="modal-header">
+      <div class="modal-header-top">
+        <div class="modal-logo-area">
+          <span class="modal-logo-icon">🏛️</span>
+          <span class="modal-logo-text">대한민국국회 회의록 스마트 뷰어</span>
+        </div>
+        <div class="modal-badge" id="modal-badge"></div>
+      </div>
+      <h2 class="modal-title" id="modal-title"></h2>
+      <div class="modal-meta" id="modal-meta"></div>
+    </div>
+    
+    <div class="modal-container">
+      <!-- 1) 좌측 사이드바 (Navigation Panel) -->
+      <aside class="modal-sidebar">
+        <!-- 사이드바 탭 메뉴 -->
+        <div class="sidebar-tab-menu">
+          <button class="sidebar-tab-btn active" data-sidebar-tab="agendas">📋 상정 안건</button>
+          <button class="sidebar-tab-btn" data-sidebar-tab="speakers">👤 발언 의원</button>
+          <button class="sidebar-tab-btn" data-sidebar-tab="keywords">🏷️ 키워드</button>
+        </div>
+        
+        <!-- 안건 패널 -->
+        <div class="sidebar-panel active" id="sidebar-panel-agendas">
+          <div class="sidebar-panel-title">본 회의 상정 의안</div>
+          <div id="modal-agendas" class="modal-agendas"></div>
+        </div>
+        
+        <!-- 발언자 패널 -->
+        <div class="sidebar-panel" id="sidebar-panel-speakers">
+          <div class="sidebar-panel-title">발언 의원 목록 (비중 순)</div>
+          <div id="modal-speakers" class="modal-speakers-wrap"></div>
+        </div>
+
+        <!-- 키워드 패널 -->
+        <div class="sidebar-panel" id="sidebar-panel-keywords">
+          <div class="sidebar-panel-title">핫 키워드 태그</div>
+          <!-- 모달 내 키워드 실시간 검색창 추가 -->
+          <div class="modal-kw-search-box" style="padding: 0 10px 8px 10px;">
+            <input type="text" id="modal-kw-search-input" placeholder="본 회의 키워드 검색 후 Enter..." style="width: 100%; padding: 6px 10px; font-size: 11.5px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);" autocomplete="off" />
+          </div>
+          <!-- 검색 팁 안내문 추가 -->
+          <div class="kw-search-guide" style="font-size: 10px; color: var(--text-tertiary); margin: 0 10px 10px 10px; padding: 6px 8px; background: rgba(255,255,255,0.02); border-radius: 4px; line-height: 1.4;">
+            💡 <strong>[검색 팁]</strong><br>
+            • <strong>혼합 검색</strong>: 의원명 & 키워드 (예: <code>최민희 & 방송법</code>)<br>
+            • <strong>날짜 검색</strong>: 연도-월-일 (예: <code>2026-05-07</code>)<br>
+            • <strong>의원 검색</strong>: 의원명만 입력 (예: <code>최민희</code>)<br>
+            • <strong>다중 키워드 (OR)</strong>: 쉼표 나열 (예: <code>인공지능, AI</code>)
+          </div>
+          <div id="modal-sidebar-keywords" class="modal-sidebar-keywords-wrap"></div>
+        </div>
+      </aside>
+      
+      <!-- 2) 우측 본문 뷰어 (Viewer Panel) -->
+      <main class="modal-viewer-body">
+        <!-- 뷰어 상단 퀵 네비게이션 헤더 -->
+        <div class="viewer-quick-header">
+          <button class="btn-status-report-back hidden" id="btn-back-to-status">🏛️ 상황 보고서 전체보기</button>
+        </div>
+        
+        <!-- 동적 전환 뷰어 영역 컨테이너 -->
+        <div id="dynamic-viewer-container" class="dynamic-viewer-container">
+          <!-- 본문 영역 서브 섹션들 -->
+          <section class="viewer-section">
+            <div class="viewer-section-header">
+              <span class="viewer-icon">📝</span>
+              <span class="viewer-title">국회 정책 대응 상황 보고서 (Status Report)</span>
+            </div>
+            <div class="modal-summary" id="modal-summary"></div>
+          </section>
+          
+          <section class="viewer-section">
+            <div class="viewer-section-header">
+              <span class="viewer-icon">🔑</span>
+              <span class="viewer-title">회의 핵심 법안 및 정책 키워드</span>
+            </div>
+            <div id="modal-keywords" class="modal-keywords-wrap"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 키워드 클라우드 풀스크린 확대 모달 ==================== -->
+<div class="cloud-expand-overlay hidden" id="cloud-expand-overlay">
+  <div class="cloud-expand-modal">
+    <button class="cloud-modal-close" id="cloud-modal-close">×</button>
+    <div class="cloud-modal-header">
+      <span class="cloud-modal-logo">🏛️</span>
+      <div class="cloud-modal-title-area">
+        <h2>전체 키워드 클라우드 (Top 80)</h2>
+        <p>전체 국회 회의록에서 추출된 핵심 키워드의 빈도를 분석합니다. 태그를 클릭하면 즉시 검색 결과로 연동됩니다.</p>
+      </div>
+    </div>
+    <div class="cloud-modal-body">
+      <div id="keyword-cloud-full" class="keyword-cloud-full"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SCRIPTS ==================== -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+<script src="app.js?v=4.7"></script>
+</body>
+</html>
