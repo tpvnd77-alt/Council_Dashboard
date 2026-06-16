@@ -661,8 +661,8 @@ function createMeetingCard(m, index, query) {
   }
 
   let badgeText = type;
-  if (type === '정보통신방송소위') badgeText = '정보통신방송소위 법안심사';
-  else if (type === '과학기술원자력소위') badgeText = '과학기술원자력소위 법안심사';
+  if (type === '정보통신방송소위') badgeText = '법안2소위 법안심사';
+  else if (type === '과학기술원자력소위') badgeText = '법안1소위 법안심사';
 
   card.innerHTML = `
     <div class="card-top">
@@ -715,8 +715,8 @@ function openModal(m) {
 
   // 1. 모달 머리글 매핑 & 유형 텍스트 분기
   let badgeText = type;
-  if (type === '정보통신방송소위') badgeText = '정보통신방송소위 법안심사';
-  else if (type === '과학기술원자력소위') badgeText = '과학기술원자력소위 법안심사';
+  if (type === '정보통신방송소위') badgeText = '법안2소위 법안심사';
+  else if (type === '과학기술원자력소위') badgeText = '법안1소위 법안심사';
   
   document.getElementById('modal-badge').innerHTML = `<span class="card-badge badge-${type}" style="border-color:${color}44">${badgeText}</span>`;
   document.getElementById('modal-title').textContent = cleanTitle;
