@@ -3646,18 +3646,6 @@ function getBestSearchWord(text) {
  * 지능형 PDF 퀵링크 페이지 점프 및 노란색 형광펜 매뉴얼 검색 동시 유도 팩
  */
 function openPdfWithHighlight(filename, page, text, speaker) {
-  // 클라우드(GitHub Pages) 환경인지 확인 (보안 정책 상 원본 PDF는 클라우드에 업로드되지 않음)
-  const isCloud = window.location.hostname !== 'localhost' && 
-                  window.location.hostname !== '127.0.0.1' && 
-                  window.location.protocol !== 'file:';
-                  
-  if (isCloud) {
-    showStickyAlert(`🔒 <strong>로컬 전용 기능 안내</strong><br/>
-      보안 및 용량 제한으로 원본 PDF 파일은 클라우드(GitHub)에 업로드되지 않았습니다.<br/>
-      PDF 원본 보기 및 해당 페이지 점프 기능은 <strong>로컬 대시보드(http://localhost:8765)</strong>에서 실행할 때만 지원됩니다.`);
-    return;
-  }
-
   const pdfUrl = `pdf/${encodeURIComponent(filename)}#page=${page}`;
   window.open(pdfUrl, '_blank');
   
