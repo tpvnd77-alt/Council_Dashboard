@@ -27,7 +27,7 @@ except ImportError:
 # === 설정 ===
 PDF_DIR    = r"C:\Users\hp\bills_council\pdf_22nd"
 OUTPUT_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings.json"
-MAX_PAGES  = 20
+MAX_PAGES  = 1000
 MAX_WORKERS = 6
 
 # ─── 불용어 (대폭 강화 및 노이즈 직책어/조사/형식어 배제) ───────────────────────────────────────────
@@ -1341,30 +1341,65 @@ def main():
         safe_print(f"오류: {PDF_DIR} 없음")
         sys.exit(1)
 
+    output_path = Path(OUTPUT_PATH)
+    
+    # 캐시된 회의록 불러오기 (이미 파싱된 데이터 재사용을 통해 속도 향상)
+    existing_meetings = {}
+    if output_path.exists():
+        try:
+            with open(output_path, 'r', encoding='utf-8') as f:
+                old_db = json.load(f)
+                for m in old_db.get("meetings", []):
+                    # 파일명 기준 캐싱
+                    existing_meetings[m["filename"]] = m
+        except Exception:
+            pass
+
     all_pdfs = sorted([
         f for f in pdf_dir.iterdir()
         if f.suffix.lower() == '.pdf' and not is_duplicate(f.name)
     ], key=lambda p: p.stat().st_size)
 
     total = len(all_pdfs)
-    safe_print(f"총 {total}개 파싱 시작 (v3 - 발언내용요약 + 이름정규화)")
+    safe_print(f"총 {total}개 중 갱신 필요 대상 선별 및 파싱 시작 (v3 - 캐싱 및 전체 분석)")
 
     meetings, errors, done = [], [], 0
+    pdfs_to_parse = []
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_path = {executor.submit(parse_pdf, p): p for p in all_pdfs}
-        for future in as_completed(future_to_path):
-            path = future_to_path[future]
+    for p in all_pdfs:
+        cached = existing_meetings.get(p.name)
+        # 캐시가 있고, 이전 파싱 시 20페이지 제한이 아니었으며(parsed_full 플래그), 파일 크기가 같으면 캐시 재사용
+        # (첫 실행 시에는 기존 DB에 parsed_full 플래그가 없으므로 자동으로 전체 재파싱됨)
+        if cached and cached.get("parsed_full") and cached.get("file_size") == p.stat().st_size:
+            meetings.append(cached)
             done += 1
-            try:
-                data = future.result()
-                meetings.append(data)
-                spk_names = [s['name'] for s in data.get('speakers', [])[:3]]
-                kw_str = ", ".join(k["word"] for k in data.get("keywords", [])[:3])
-                safe_print(f"[{done:3d}/{total}] {data.get('date','?')} | {', '.join(spk_names)} | {kw_str}")
-            except Exception as e:
-                safe_print(f"[{done:3d}/{total}] ERR {path.name[:40]}: {e}")
-                errors.append({"file": path.name, "error": str(e)})
+            spk_names = [s['name'] for s in cached.get('speakers', [])[:3]]
+            kw_str = ", ".join(k["word"] for k in cached.get("keywords", [])[:3])
+            safe_print(f"[{done:3d}/{total}] (캐시사용) {cached.get('date','?')} | {', '.join(spk_names)} | {kw_str}")
+        else:
+            pdfs_to_parse.append(p)
+
+    if pdfs_to_parse:
+        safe_print(f"새로 파싱할 PDF 개수: {len(pdfs_to_parse)}개")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_path = {executor.submit(parse_pdf, p): p for p in pdfs_to_parse}
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                done += 1
+                try:
+                    data = future.result()
+                    # 캐시 검증용 추가 메타데이터 기입
+                    data["parsed_full"] = True
+                    data["file_size"] = path.stat().st_size
+                    meetings.append(data)
+                    spk_names = [s['name'] for s in data.get('speakers', [])[:3]]
+                    kw_str = ", ".join(k["word"] for k in data.get("keywords", [])[:3])
+                    safe_print(f"[{done:3d}/{total}] (파싱완료) {data.get('date','?')} | {', '.join(spk_names)} | {kw_str}")
+                except Exception as e:
+                    safe_print(f"[{done:3d}/{total}] ERR {path.name[:40]}: {e}")
+                    errors.append({"file": path.name, "error": str(e)})
+    else:
+        safe_print("모든 회의록이 이미 최신 상태(전체 페이지 분석 완료)입니다.")
 
     meetings.sort(key=lambda x: (x.get("date") or "0000-00-00"))
 

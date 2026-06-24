@@ -46,6 +46,37 @@ const TYPE_COLORS = {
 const TREND_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#06b6d4'];
 
 // ============================================================
+// 유틸리티 함수 (영문 약어 및 검색어 정밀 매칭/하이라이트)
+// ============================================================
+function matchKeyword(text, kw) {
+  if (!text || !kw) return false;
+  const cleanText = text.toLowerCase();
+  const cleanKw = kw.toLowerCase();
+  
+  // 영문 약어(CI, AI, RD 등)인 경우 단어 경계(\b)를 고려한 정밀 매칭 적용
+  const isEnglishAcronym = /^[a-z0-9_-]+$/i.test(cleanKw);
+  if (isEnglishAcronym) {
+    const escaped = cleanKw.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const regex = new RegExp('\\b' + escaped + '\\b', 'i');
+    return regex.test(cleanText);
+  }
+  return cleanText.includes(cleanKw);
+}
+
+function highlightWithWordBoundary(txt, kw, isClassHighlight = false) {
+  if (!txt || !kw) return txt;
+  const escaped = kw.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const isEnglishAcronym = /^[a-z0-9_-]+$/i.test(kw);
+  const regex = isEnglishAcronym ? new RegExp(`\\b(${escaped})\\b`, 'gi') : new RegExp(`(${escaped})`, 'gi');
+  
+  const highlightClass = isClassHighlight 
+    ? 'class="search-highlight" style="background:#eab308; color:#000; font-weight:bold; border-radius:2px; padding:0 2px;"' 
+    : 'class="search-highlight"';
+    
+  return txt.replace(regex, `<mark ${highlightClass}>$1</mark>`);
+}
+
+// ============================================================
 // 애플리케이션 초기화
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -627,9 +658,18 @@ function createMeetingCard(m, index, query) {
   // 2. 검색어 하이라이트 함수 적용
   const highlight = (txt) => {
     if (!query || !txt) return escHtml(txt);
-    const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    const regex = new RegExp(`(${escapedQuery})`, 'gi');
-    return escHtml(txt).replace(regex, '<mark class="search-highlight">$1</mark>');
+    const escapedText = escHtml(txt);
+    if (query.includes('&')) {
+      let highlighted = escapedText;
+      const parts = query.split('&').map(p => p.trim());
+      const keywords = parts.slice(1).map(g => g.split(',').map(k => k.trim())).flat().filter(Boolean);
+      keywords.forEach(kw => {
+        highlighted = highlightWithWordBoundary(highlighted, kw);
+      });
+      return highlighted;
+    } else {
+      return highlightWithWordBoundary(escapedText, query);
+    }
   };
 
   // 3. 안건 미리보기 또는 요약 분기 출력 (사용자 피드백 반영 원복)
@@ -1374,8 +1414,7 @@ function openModal(m) {
     const highlightKeyword = (txt, keywordsList) => {
       let highlighted = escHtml(txt);
       keywordsList.forEach(kw => {
-        const regex = new RegExp(`(${kw})`, 'gi');
-        highlighted = highlighted.replace(regex, '<mark class="search-highlight" style="background:#eab308; color:#000; font-weight:bold; border-radius:2px; padding:0 2px;">$1</mark>');
+        highlighted = highlightWithWordBoundary(highlighted, kw, true);
       });
       return highlighted;
     };
@@ -1403,7 +1442,7 @@ function openModal(m) {
             const mergedTurns = getSpeakerMergedTurns(spk.lines, spk.name);
             mergedTurns.forEach(turn => {
               const matchesAllGroups = keywordGroups.every(group => 
-                group.some(kw => turn.text.toLowerCase().includes(kw))
+                group.some(kw => matchKeyword(turn.text, kw))
               );
               if (matchesAllGroups) {
                 searchResults.push({
@@ -1430,7 +1469,7 @@ function openModal(m) {
         if (!spk.lines) return;
         const mergedTurns = getSpeakerMergedTurns(spk.lines, spk.name);
         mergedTurns.forEach(turn => {
-          const matchedKw = orKws.find(kw => turn.text.toLowerCase().includes(kw));
+          const matchedKw = orKws.find(kw => matchKeyword(turn.text, kw));
           if (matchedKw) {
             searchResults.push({
               name: turn.name,
@@ -1445,7 +1484,7 @@ function openModal(m) {
       // 요약 보고서 발췌
       if (searchResults.length === 0) {
         lines.forEach((line, idx) => {
-          const matchedKw = orKws.find(kw => line.toLowerCase().includes(kw));
+          const matchedKw = orKws.find(kw => matchKeyword(line, kw));
           if (matchedKw && !line.startsWith('1. ') && !line.startsWith('2. ') && !line.startsWith('▲')) {
             searchResults.push({
               name: "요약 보고서 발췌",
@@ -1906,7 +1945,7 @@ function searchSpeakerTab(query) {
             const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
             mergedTurns.forEach(turn => {
               const matchesAllGroups = keywordGroups.every(group => 
-                group.some(kw => turn.text.toLowerCase().includes(kw))
+                group.some(kw => matchKeyword(turn.text, kw))
               );
               if (matchesAllGroups) {
                 speechMatches.push({
@@ -2174,7 +2213,7 @@ function searchSpeakerTab(query) {
       if (s.lines && s.lines.length > 0) {
         const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
         mergedTurns.forEach(turn => {
-          const matchedKw = orKws.find(kw => turn.text.toLowerCase().includes(kw));
+          const matchedKw = orKws.find(kw => matchKeyword(turn.text, kw));
           if (matchedKw) {
             matchedSpeeches.push({
               meeting: m,
@@ -2716,7 +2755,7 @@ function searchKeyword(keyword, shouldUpdate = true) {
             const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
             mergedTurns.forEach(turn => {
               const matchesAllGroups = keywordGroups.every(group => 
-                group.some(kw => turn.text.toLowerCase().includes(kw))
+                group.some(kw => matchKeyword(turn.text, kw))
               );
 
               if (matchesAllGroups) {
@@ -3001,7 +3040,7 @@ function searchKeyword(keyword, shouldUpdate = true) {
       if (s.lines && s.lines.length > 0) {
         const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
         mergedTurns.forEach(turn => {
-          const matchedKw = orKws.find(kw => turn.text.toLowerCase().includes(kw));
+          const matchedKw = orKws.find(kw => matchKeyword(turn.text, kw));
           if (matchedKw) {
             matchedSpeeches.push({
               meeting: m,
