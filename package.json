@@ -1,0 +1,12 @@
+{
+  "name": "council-dashboard-c",
+  "version": "1.0.0",
+  "description": "Serverless APIs for National Assembly Council Dashboard",
+  "main": "index.js",
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

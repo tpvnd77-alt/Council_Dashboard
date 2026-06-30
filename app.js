@@ -173,9 +173,9 @@ function switchTab(tab) {
 async function loadData() {
   const loadSub = document.getElementById('loading-sub');
   try {
-    loadSub.textContent = '서버에서 data/meetings.json 로드 중...';
+    loadSub.textContent = '서버에서 회의록 목록 로드 중...';
     // 브라우저 디스크 캐시 방지를 위해 캐시 버스팅(Cache Busting) 쿼리 적용
-    const resp = await fetch('data/meetings.json?v=' + Date.now());
+    const resp = await fetch('/api/meetings?v=' + Date.now());
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     
     STATE.db = await resp.json();
@@ -203,7 +203,7 @@ async function loadData() {
     // 로드 후 URL 라우팅 적용
     handleRouting();
   } catch (err) {
-    console.warn("로컬 fetch 실패. file:// 프로토콜 테스트용 더미 모드를 검토합니다.", err);
+    console.warn("API fetch 실패. file:// 프로토콜 테스트용 더미 모드를 검토합니다.", err);
     tryDummyLoad(err);
   }
 }
@@ -398,23 +398,27 @@ function handleRouting() {
     const name = params.get('name') || '';
     if (name) {
       setTimeout(() => {
-        // 발언자를 바로 검색해주는 UI 보조 지원
         const sel = document.getElementById('speaker-meeting-select');
-        // 첫 번째 만나는 해당 발언자 포함 회의 선택
-        const meetings = STATE.db.meetings;
-        const matchedIdx = meetings.findIndex(m => (m.speakers || []).some(s => s.name.includes(name)));
-        if (matchedIdx !== -1) {
-          sel.value = matchedIdx;
-          sel.dispatchEvent(new Event('change'));
-          // 리스트에서 발언자 찾아 클릭 유도
-          setTimeout(() => {
-            document.querySelectorAll('#speaker-list .speaker-item').forEach(el => {
-              if (el.querySelector('.speaker-name').textContent.includes(name)) {
-                el.click();
+        fetch('/api/search?speaker=' + encodeURIComponent(name))
+          .then(r => r.json())
+          .then(res => {
+            if (res.success && res.matched_meetings && res.matched_meetings.length > 0) {
+              const matchedFilename = res.matched_meetings[0].filename;
+              const matchedIdx = STATE.db.meetings.findIndex(m => m.filename === matchedFilename);
+              if (matchedIdx !== -1) {
+                sel.value = matchedIdx;
+                sel.dispatchEvent(new Event('change'));
+                setTimeout(() => {
+                  document.querySelectorAll('#speaker-list .speaker-item').forEach(el => {
+                    if (el.querySelector('.speaker-name').textContent.includes(name)) {
+                      el.click();
+                    }
+                  });
+                }, 400);
               }
-            });
-          }, 200);
-        }
+            }
+          })
+          .catch(err => console.error("Speaker routing failed", err));
       }, 300);
     }
   }
@@ -741,31 +745,49 @@ function createMeetingCard(m, index, query) {
 // ============================================================
 // 2단계: 모달 레이아웃 & 상세 정보 (프로그레스바 적용)
 // ============================================================
-function openModal(m) {
+async function openModal(mMetadata) {
   try {
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Show initial metadata in headers
+    const type = mMetadata.meeting_type || '기타';
+    const color = TYPE_COLORS[type] || TYPE_COLORS['기타'];
+    const dateStr = mMetadata.date ? mMetadata.date.replace(/-/g, '.') : '날짜 미상';
+
+    let cleanTitle = mMetadata.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '회의록';
+    cleanTitle = cleanTitle.replace(/^제22대국회\s+/, '');
+
+    let badgeText = type;
+    if (type === '정보통신방송소위') badgeText = '법안2소위 법안심사';
+    else if (type === '과학기술원자력소위') badgeText = '법안1소위 법안심사';
+    
+    document.getElementById('modal-badge').innerHTML = `<span class="card-badge badge-${type}" style="border-color:${color}44">${badgeText}</span>`;
+    document.getElementById('modal-title').textContent = cleanTitle;
+    document.getElementById('modal-meta').innerHTML = `
+      <span>🏛️ 제${mMetadata.session_num || '?'}회 (${mMetadata.session_type || '임시회'})</span>
+      <span>📅 회의 일자: ${dateStr}</span>
+      <span>📑 제${mMetadata.order_num || '?'}차 회의</span>
+      <span>📏 회의록 분량: ${(mMetadata.text_length || 0).toLocaleString()}자</span>
+    `;
+
+    // Show loading in sub components
+    document.getElementById('modal-agendas').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>';
+    document.getElementById('modal-speakers').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>';
+    document.getElementById('modal-sidebar-keywords').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>';
+    document.getElementById('modal-summary').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">보고서 불러오는 중...</div>';
+    document.getElementById('modal-keywords').innerHTML = '';
+
+    // Fetch full meeting detail
+    const resp = await fetch('/api/meetings?filename=' + encodeURIComponent(mMetadata.filename));
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!data.success || !data.meeting) throw new Error('상세 데이터를 불러올 수 없습니다.');
+    
+    const m = data.meeting;
     STATE.lastOpenMeeting = m; // 모달 복원을 위해 저장
     STATE.selectedSpeakers = []; // 초기화
-    const overlay = document.getElementById('modal-overlay');
-  const type = m.meeting_type || '기타';
-  const color = TYPE_COLORS[type] || TYPE_COLORS['기타'];
-  const dateStr = m.date ? m.date.replace(/-/g, '.') : '날짜 미상';
-
-  let cleanTitle = m.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '회의록';
-  cleanTitle = cleanTitle.replace(/^제22대국회\s+/, '');
-
-  // 1. 모달 머리글 매핑 & 유형 텍스트 분기
-  let badgeText = type;
-  if (type === '정보통신방송소위') badgeText = '법안2소위 법안심사';
-  else if (type === '과학기술원자력소위') badgeText = '법안1소위 법안심사';
-  
-  document.getElementById('modal-badge').innerHTML = `<span class="card-badge badge-${type}" style="border-color:${color}44">${badgeText}</span>`;
-  document.getElementById('modal-title').textContent = cleanTitle;
-  document.getElementById('modal-meta').innerHTML = `
-    <span>🏛️ 제${m.session_num || '?'}회 (${m.session_type || '임시회'})</span>
-    <span>📅 회의 일자: ${dateStr}</span>
-    <span>📑 제${m.order_num || '?'}차 회의</span>
-    <span>📏 회의록 분량: ${(m.text_length || 0).toLocaleString()}자</span>
-  `;
 
   // 2. 사이드바 - 상정 안건 탭
   const agendasContainer = document.getElementById('modal-agendas');
@@ -1610,8 +1632,8 @@ function openModal(m) {
         ⚠️ 대시보드 런타임 에러 감지 (openModal)
         <span style="cursor:pointer; font-size:18px;" onclick="this.parentElement.remove()">×</span>
       </div>
-      <div><strong>에러명:</strong> \${err.name}: \${err.message}</div>
-      <div style="margin-top:8px; background:rgba(0,0,0,0.2); padding:10px; border-radius:4px; max-height:200px; overflow-y:auto; font-size:11px;">\${err.stack}</div>
+      <div><strong>에러명:</strong> ${err.name}: ${err.message}</div>
+      <div style="margin-top:8px; background:rgba(0,0,0,0.2); padding:10px; border-radius:4px; max-height:200px; overflow-y:auto; font-size:11px;">${err.stack}</div>
       <div style="margin-top:8px; text-align:right; font-size:10px; opacity:0.8;">※ 이 메시지를 복사해서 개발자에게 알려주세요.</div>
     `;
   }
@@ -1675,16 +1697,24 @@ function initSpeakerTab() {
     sel.appendChild(opt);
   });
 
-  sel.addEventListener('change', () => {
+  sel.addEventListener('change', async () => {
     const idx = sel.value;
     if (idx === '') {
       document.getElementById('speaker-list').innerHTML = '<div style="color:var(--text-tertiary); padding:16px; font-size:13px;">회의를 선택하면 상세 발언 의원 목록이 표시됩니다.</div>';
       renderSpeakersOverview(null); // 전체 통계 차트로 복원
       return;
     }
-    const selectedMeeting = meetings[parseInt(idx)];
-    renderSpeakersForMeeting(selectedMeeting);
-    renderSpeakersOverview(selectedMeeting); // 선택된 회의록의 발언 통계 차트로 갱신
+    const selectedMeetingMeta = meetings[parseInt(idx)];
+    try {
+      const detailResp = await fetch('/api/meetings?filename=' + encodeURIComponent(selectedMeetingMeta.filename));
+      const detailData = await detailResp.json();
+      if (detailData.success && detailData.meeting) {
+        renderSpeakersForMeeting(detailData.meeting);
+        renderSpeakersOverview(detailData.meeting); // 선택된 회의록의 발언 통계 차트로 갱신
+      }
+    } catch (e) {
+      console.error("Failed to load speaker meeting details", e);
+    }
   });
 }
 
@@ -2621,7 +2651,7 @@ function renderPopularKeywordTags() {
 /**
  * 단일 키워드 검색 및 관련 회의록 리스팅
  */
-function searchKeyword(keyword, shouldUpdate = true) {
+async function searchKeyword(keyword, shouldUpdate = true) {
   if (!keyword) return;
   
   keyword = keyword.trim();
@@ -2655,7 +2685,6 @@ function searchKeyword(keyword, shouldUpdate = true) {
   if (dateRegex.test(dateQuery)) {
     const matchedMeetings = STATE.db.meetings.filter(m => m.date === dateQuery);
     if (matchedMeetings.length === 0) {
-      // 날짜가 없을 때 최근 5개 날짜 제안
       const recentDates = [...new Set(STATE.db.meetings.map(m => m.date).filter(Boolean))]
         .sort((a, b) => b.localeCompare(a))
         .slice(0, 5);
@@ -2678,16 +2707,14 @@ function searchKeyword(keyword, shouldUpdate = true) {
       let cleanTitle = m.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '';
       cleanTitle = cleanTitle.replace(/^제22대국회\s+/, '');
 
-      // 안건 리스트 요약
       const agendaCount = m.agendas?.length || 0;
       const agendaListHTML = m.agendas?.length 
         ? `<div class="speech-result-agendas" style="margin-top:8px; font-size:13px; color:var(--text-secondary);">
              <strong style="color:var(--accent-cyan); font-size:13.5px;">📋 상정 안건 (총 ${agendaCount}건):</strong>
-             ${m.agendas.map((a, i) => `<div style="margin-left:8px; margin-top:3px; color:var(--text-primary); font-weight:500;">${i+1}. ${escHtml(a.title)}</div>`).join('')}
+             ${m.agendas.map((a, i) => `<div style="margin-left:8px; margin-top:3px; color:var(--text-primary); font-weight:500;">${i+1}. ${escHtml(a.title || a)}</div>`).join('')}
            </div>`
         : '<div style="margin-top:8px; font-size:12px; opacity:0.7;">의사 안건 정보 없음</div>';
 
-      // 주요 키워드
       const keywordsHTML = m.keywords?.length
         ? `<div class="speech-result-kws" style="margin-top:8px; font-size:12px; display:flex; flex-wrap:wrap; gap:6px;">
              <strong style="color:var(--accent-amber); margin-right:4px;">🔑 주요 키워드:</strong>
@@ -2695,7 +2722,6 @@ function searchKeyword(keyword, shouldUpdate = true) {
            </div>`
         : '';
 
-      // 회의 주요 요약 내용
       let summaryHTML = '';
       if (m.summary) {
         const bulletPoints = m.summary.split('\n')
@@ -2712,7 +2738,7 @@ function searchKeyword(keyword, shouldUpdate = true) {
       }
 
       return `
-        <div class="kw-result-item-full" data-idx="${STATE.db.meetings.indexOf(m)}" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); border-radius:8px; padding:16px; margin-bottom:12px; cursor:pointer; transition:all 0.2s;">
+        <div class="kw-result-item-full" data-filename="${escHtml(m.filename)}" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); border-radius:8px; padding:16px; margin-bottom:12px; cursor:pointer; transition:all 0.2s;">
           <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">
             <span class="kw-result-title" style="font-weight:700; font-size:15px; color:var(--accent-cyan);">${escHtml(cleanTitle)}</span>
             <span class="card-badge badge-${m.meeting_type}" style="margin-left:auto;">${escHtml(m.meeting_type)}</span>
@@ -2726,107 +2752,126 @@ function searchKeyword(keyword, shouldUpdate = true) {
     }).join('');
 
     listEl.querySelectorAll('.kw-result-item-full').forEach(el => {
-      el.onclick = () => openModal(STATE.db.meetings[parseInt(el.dataset.idx)]);
+      el.onclick = () => {
+        const filename = el.dataset.filename;
+        const matched = STATE.db.meetings.find(x => x.filename === filename);
+        if (matched) openModal(matched);
+      };
     });
 
     if (shouldUpdate) updateHash();
     return;
   }
 
-  // 2. [이름 & AND/OR 혼합 검색] : '&'가 포함된 경우
-  if (keyword.includes('&')) {
-    const parts = keyword.split('&').map(p => p.trim());
-    const speakerName = parts[0];
-    const keywordGroups = parts.slice(1).map(g => 
-      g.split(',').map(k => {
-        let clean = k.trim().toLowerCase();
-        clean = clean.replace(/\s*(통과|합의|반대|규제|진흥|개정|제정|폐지|상정|의결|처리|논의|보고|제출|검토|법안|개정안|법|의안)\s*$/, '').trim();
-        return clean;
-      }).filter(Boolean)
-    ).filter(arr => arr.length > 0);
+  // 2. [일반 키워드 및 의원 혼합 검색] - 백엔드 API 연동
+  listEl.innerHTML = `
+    <div class="loading-spinner-small" style="text-align:center; padding:30px;">
+      <div class="loading-spinner" style="margin:0 auto 10px auto;"></div>
+      <p style="font-size:13px; color:var(--text-secondary);">지능형 통합 검색 엔진 가동 중...</p>
+    </div>
+  `;
 
-    const speechMatches = [];
-
-    STATE.db.meetings.forEach(m => {
-      (m.speakers || []).forEach(s => {
-        const cleanName = s.name.replace(/^(위원장|소위원장|의원|간사)\s+/, '').trim();
-        if (cleanName.includes(speakerName) || speakerName.includes(cleanName)) {
-          if (s.lines && s.lines.length > 0) {
-            const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
-            mergedTurns.forEach(turn => {
-              const matchesAllGroups = keywordGroups.every(group => 
-                group.some(kw => matchKeyword(turn.text, kw))
-              );
-
-              if (matchesAllGroups) {
-                speechMatches.push({
-                  meeting: m,
-                  speaker: turn.name,
-                  text: turn.text,
-                  page: turn.page,
-                  line: { text: turn.text, page: turn.page },
-                  lineIdx: turn.lineIdxs[0]
-                });
-              }
-            });
-          }
-        }
-      });
+  const cleanKw = keyword.trim().toLowerCase();
+  const allSpeakers = new Set();
+  STATE.db.meetings.forEach(m => {
+    (m.speakers || []).forEach(s => {
+      const cleanName = s.name.replace(/^(위원장|소위원장|의원|간사)\s+/, '').trim().toLowerCase();
+      allSpeakers.add(cleanName);
     });
+  });
+  
+  const isSpeakerOnly = allSpeakers.has(cleanKw);
+  let url = '';
+  if (isSpeakerOnly) {
+    url = '/api/search?speaker=' + encodeURIComponent(keyword);
+  } else {
+    url = '/api/search?q=' + encodeURIComponent(keyword);
+  }
 
-    const displayKeywordStr = keywordGroups.map(g => g.join(', ')).join(' & ');
-    titleEl.textContent = `🔍 "${speakerName}"의 "${displayKeywordStr}" 관련 정밀 검색 (${speechMatches.length}건)`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const matchedMeetings = data.matched_meetings || [];
 
-    if (speechMatches.length === 0) {
-      listEl.innerHTML = `<div class="no-results" style="padding:20px"><p>'${speakerName}' 의원의 '${displayKeywordStr}' 관련 발언 기록을 찾을 수 없습니다.</p></div>`;
+    const totalSpeeches = matchedMeetings.reduce((acc, m) => acc + (m.matched_speeches || []).length, 0);
+
+    if (isSpeakerOnly) {
+      titleEl.textContent = `👤 "${keyword}" 의원 발언 내역 검색 (총 ${totalSpeeches}건)`;
+    } else if (keyword.includes('&')) {
+      titleEl.textContent = `🔍 "${keyword}" 관련 정밀 검색 (총 ${totalSpeeches}건)`;
+    } else {
+      titleEl.textContent = `🔍 "${keyword}" 관련 발언 실시간 검색 (총 ${totalSpeeches}건)`;
+    }
+
+    if (totalSpeeches === 0) {
+      listEl.innerHTML = `<div class="no-results" style="padding:20px"><p>'${escHtml(keyword)}' 관련 발언 기록이 없습니다.</p></div>`;
       return;
     }
 
-    // 회의록별 그룹화
-    const groups = [];
-    speechMatches.forEach(match => {
-      let group = groups.find(g => g.meeting === match.meeting);
-      if (!group) {
-        group = { meeting: match.meeting, items: [] };
-        groups.push(group);
-      }
-      group.items.push(match);
-    });
+    // 결과 렌더링
+    let downloadBtnHTML = '';
+    if (isSpeakerOnly) {
+      downloadBtnHTML = `
+        <div style="margin-bottom:12px; text-align:right;">
+          <button id="btn-download-speech-report" class="kw-compare-btn" style="font-size:12px; padding:6px 12px; background:rgba(99,102,241,0.2); border:1px solid rgba(99,102,241,0.4); border-radius:6px; color:#a5b4fc; font-weight:600; cursor:pointer;">📄 발언 기록 보고서 다운로드 (.txt)</button>
+        </div>
+      `;
+    } else {
+      downloadBtnHTML = `
+        <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:13px; color:#cbd5e1; font-weight:500;">발언이 회의록별로 묶여서 정렬됩니다.</span>
+          <button id="btn-download-kws-all" class="kw-compare-btn" style="font-size:12px; padding:6px 12px; background:rgba(245,158,11,0.2); border:1px solid rgba(245,158,11,0.4); border-radius:6px; color:#fcd34d; font-weight:600; cursor:pointer;">📥 전체 발언 원문 파일 다운로드 (.txt)</button>
+        </div>
+      `;
+    }
 
-    listEl.innerHTML = `
-      <div style="margin-bottom:12px; text-align:right;">
-        <button id="btn-download-speech-report" class="kw-compare-btn" style="font-size:12px; padding:6px 12px; background:rgba(99,102,241,0.2); border:1px solid rgba(99,102,241,0.4); border-radius:6px; color:#a5b4fc; font-weight:600; cursor:pointer;">📄 발언 기록 보고서 다운로드 (.txt)</button>
-      </div>
+    // 하이라이팅을 위한 키워드 목록 분리
+    let highlightKws = [];
+    if (keyword.includes('&')) {
+      const parts = keyword.split('&').map(p => p.trim());
+      highlightKws = parts.slice(1).map(g => g.split(',').map(k => k.trim())).flat().filter(Boolean);
+    } else {
+      highlightKws = keyword.split(',').map(k => {
+        let clean = k.trim().toLowerCase();
+        clean = clean.replace(/\s*(통과|합의|반대|규제|진흥|개정|제정|폐지|상정|의결|처리|논의|보고|제출|검토|법안|개정안|법|의안)\s*$/, '').trim();
+        return clean;
+      }).filter(Boolean);
+    }
+
+    listEl.innerHTML = downloadBtnHTML + `
       <div class="speech-timeline-list">
-        ${groups.map(group => {
-          let cleanTitle = group.meeting.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '';
+        ${matchedMeetings.map(group => {
+          let cleanTitle = group.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '';
           cleanTitle = cleanTitle.replace(/^제22대국회\s+/, '');
 
           return `
             <div class="meeting-group-card" style="background:rgba(255,255,255,0.035); border:1px solid var(--border-color); border-radius:12px; padding:18px; margin-bottom:16px;">
-              <div class="meeting-group-header" data-idx="${STATE.db.meetings.indexOf(group.meeting)}" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:12px; cursor:pointer;" title="클릭 시 회의록 상세 분석 모달 열기">
-                <span style="font-weight:700; font-size:16.5px; color:var(--accent-cyan);">${escHtml(cleanTitle)}</span>
+              <div class="meeting-group-header" data-filename="${escHtml(group.filename)}" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:12px; cursor:pointer;" title="클릭 시 회의록 상세 분석 모달 열기">
+                <span style="font-weight:700; font-size:16px; color:var(--accent-cyan);">${escHtml(cleanTitle)}</span>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <span style="font-size:13px; color:#cbd5e1; font-weight:600;">📅 ${group.meeting.date}</span>
-                  <span class="card-badge badge-${group.meeting.meeting_type}" style="font-size:10px;">${escHtml(group.meeting.meeting_type)}</span>
+                  <span style="font-size:13px; color:#cbd5e1; font-weight:600;">📅 ${group.date}</span>
+                  <span class="card-badge badge-${group.meeting_type}" style="font-size:10px;">${escHtml(group.meeting_type)}</span>
                 </div>
               </div>
               <div style="display:flex; flex-direction:column; gap:12px;">
                 ${(() => {
-                  const mergedItems = mergeConsecutiveTimelineItems(group.items);
+                  const items = (group.matched_speeches || []).map(s => ({
+                    name: s.speaker,
+                    text: s.content,
+                    page: s.page
+                  }));
+                  const mergedItems = mergeConsecutiveTimelineItems(items);
                   return mergedItems.map(seg => {
                     let highlightedLine = escHtml(formatSpeechText(seg.text));
-                    keywordGroups.forEach(grp => {
-                      grp.forEach(kw => {
-                        const regex = new RegExp(`(${kw})`, 'gi');
-                        highlightedLine = highlightedLine.replace(regex, '<mark class="search-highlight" style="background:#eab308; color:#000; font-weight:bold; border-radius:2px; padding:0 2px;">$1</mark>');
-                      });
+                    highlightKws.forEach(kw => {
+                      highlightedLine = highlightWithWordBoundary(highlightedLine, kw, true);
                     });
 
                     return `
-                      <div class="speech-timeline-node accent-indigo" data-page="${seg.page}" data-filename="${escHtml(group.meeting.filename)}" data-text="${escHtml(seg.text)}" data-speaker="${escHtml(seg.speaker)}" style="cursor:pointer;" title="클릭 시 회의록 PDF의 해당 페이지 열기 (노란색 형광펜 강조)">
+                      <div class="speech-timeline-node accent-indigo" data-page="${seg.page}" data-filename="${escHtml(group.filename)}" data-text="${escHtml(seg.text)}" data-speaker="${escHtml(seg.name)}" style="cursor:pointer;" title="클릭 시 회의록 PDF의 해당 페이지 열기 (노란색 형광펜 강조)">
                         <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;">
-                          <span style="font-weight:700; color:var(--accent-cyan); font-size:13.5px;">👤 ${escHtml(seg.speaker)}</span>
+                          <span style="font-weight:700; color:var(--accent-cyan); font-size:13.5px;">👤 ${escHtml(seg.name)}</span>
                           <span style="font-weight:700; color:#22d3ee; font-size:12.5px;">📄 PDF ${seg.page}페이지 🔗</span>
                         </div>
                         <div class="timeline-bubble" style="font-size:14.5px; line-height:1.75; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); padding:10px 14px; border-radius:6px; color:var(--text-primary); font-weight:500;">${highlightedLine}</div>
@@ -2841,338 +2886,85 @@ function searchKeyword(keyword, shouldUpdate = true) {
       </div>
     `;
 
-    document.getElementById('btn-download-speech-report').onclick = () => {
-      let txtContent = `[${speakerName} 의원 '${displayKeywordStr}' 관련 국회 발언 전체 보고서]\n`;
-      txtContent += `발생 건수: ${speechMatches.length}건\n`;
-      txtContent += `보고서 작성 기준: 제22대 국회 과학기술정보방송통신위원회 회의록\n`;
-      txtContent += `==================================================\n\n`;
+    // 다운로드 핸들러 바인딩
+    if (isSpeakerOnly) {
+      document.getElementById('btn-download-speech-report').onclick = () => {
+        let txtContent = `[${keyword} 의원 관련 국회 발언 전체 보고서]\n`;
+        txtContent += `발생 건수: ${totalSpeeches}건\n`;
+        txtContent += `보고서 작성 기준: 제22대 국회 과학기술정보방송통신위원회 회의록\n`;
+        txtContent += `==================================================\n\n`;
 
-      speechMatches.forEach((match, idx) => {
-        txtContent += `[#${idx + 1}] 날짜: ${match.meeting.date} | 회의명: ${match.meeting.filename.replace(/\.pdf$/i, '')} | PDF: ${match.line.page}p\n`;
-        txtContent += ` - 발언자: ${match.speaker}\n`;
-        txtContent += ` - 발언 원문: ${match.line.text.trim()}\n\n`;
-      });
-
-      const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `${speakerName}_발언보고서_${displayKeywordStr.replace(/\s*&\s*/g, '_')}.txt`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    };
-
-    // 발언 노드 클릭 시 PDF 페이지 새 창 열기 바인딩
-    listEl.querySelectorAll('.speech-timeline-node').forEach(el => {
-      el.onclick = (e) => {
-        e.stopPropagation();
-        const page = parseInt(el.dataset.page);
-        const filename = el.dataset.filename;
-        const text = el.dataset.text || '';
-        const speaker = el.dataset.speaker || '';
-        openPdfWithHighlight(filename, page, text, speaker);
-      };
-    });
-
-    // 회의록 헤더 클릭 시 상세 분석 모달 열기 바인딩
-    listEl.querySelectorAll('.meeting-group-header').forEach(el => {
-      el.onclick = (e) => {
-        e.stopPropagation();
-        openModal(STATE.db.meetings[parseInt(el.dataset.idx)]);
-      };
-    });
-
-    if (shouldUpdate) updateHash();
-    return;
-  }
-
-  // 3. [의원 이름 검색] : 2-4자 한글 이름이고 데이터베이스에 실제로 해당 이름을 가진 발언자가 존재할 때만 진입
-  const nameRegex = /^[가-힣]{2,4}$/;
-  let isRealSpeaker = false;
-  if (nameRegex.test(keyword)) {
-    isRealSpeaker = STATE.db.meetings.some(m => 
-      (m.speakers || []).some(s => {
-        const cleanName = s.name.replace(/^(위원장|소위원장|의원|간사)\s+/, '').trim();
-        return cleanName === keyword;
-      })
-    );
-  }
-
-  if (nameRegex.test(keyword) && isRealSpeaker) {
-    const speechMatches = [];
-    STATE.db.meetings.forEach(m => {
-      (m.speakers || []).forEach(s => {
-        const cleanName = s.name.replace(/^(위원장|소위원장|의원|간사)\s+/, '').trim();
-        if (cleanName === keyword) {
-          if (s.lines && s.lines.length > 0) {
-            const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
-            mergedTurns.forEach(turn => {
-              speechMatches.push({
-                meeting: m,
-                speaker: turn.name,
-                text: turn.text,
-                page: turn.page,
-                line: { text: turn.text, page: turn.page },
-                lineIdx: turn.lineIdxs[0]
-              });
-            });
-          }
-        }
-      });
-    });
-
-    titleEl.textContent = `👤 "${keyword}" 의원 발언 내역 검색 (총 ${speechMatches.length}건)`;
-
-    if (speechMatches.length === 0) {
-      listEl.innerHTML = `<div class="no-results" style="padding:20px"><p>'${keyword}' 의원의 발언 기록이 없습니다.</p></div>`;
-      return;
-    }
-
-    const displayMatches = speechMatches.slice(0, 30); // 최근 30건 노출로 확대
-
-    // 회의록별 그룹화
-    const groups = [];
-    displayMatches.forEach(match => {
-      let group = groups.find(g => g.meeting === match.meeting);
-      if (!group) {
-        group = { meeting: match.meeting, items: [] };
-        groups.push(group);
-      }
-      group.items.push(match);
-    });
-
-    listEl.innerHTML = `
-      <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-size:13px; color:#cbd5e1; font-weight:500;">최근 발언 30건이 회의록별로 묶여서 나열됩니다. 발언 클릭 시 회의록 PDF의 해당 페이지가 열립니다.</span>
-        <button id="btn-download-speaker-all" class="kw-compare-btn" style="font-size:12px; padding:6px 12px; background:rgba(16,185,129,0.2); border:1px solid rgba(16,185,129,0.4); border-radius:6px; color:#6ee7b7; font-weight:600; cursor:pointer;">📥 전체 발언 원문 파일 정리 (.txt)</button>
-      </div>
-      <div class="speech-timeline-list">
-        ${groups.map(group => {
-          let cleanTitle = group.meeting.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '';
-          cleanTitle = cleanTitle.replace(/^제22대국회\s+/, '');
-
-          return `
-            <div class="meeting-group-card" style="background:rgba(255,255,255,0.035); border:1px solid var(--border-color); border-radius:12px; padding:18px; margin-bottom:16px;">
-              <div class="meeting-group-header" data-idx="${STATE.db.meetings.indexOf(group.meeting)}" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:12px; cursor:pointer;" title="클릭 시 회의록 상세 분석 모달 열기">
-                <span style="font-weight:700; font-size:16px; color:var(--accent-cyan);">${escHtml(cleanTitle)}</span>
-                <div style="display:flex; align-items:center; gap:8px;">
-                  <span style="font-size:13px; color:#cbd5e1; font-weight:600;">📅 ${group.meeting.date}</span>
-                  <span class="card-badge badge-${group.meeting.meeting_type}" style="font-size:10px;">${escHtml(group.meeting.meeting_type)}</span>
-                </div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:12px;">
-                ${(() => {
-                  const mergedItems = mergeConsecutiveTimelineItems(group.items);
-                  return mergedItems.map(seg => {
-                    return `
-                      <div class="speech-timeline-node" data-page="${seg.page}" data-filename="${escHtml(group.meeting.filename)}" data-text="${escHtml(seg.text)}" data-speaker="${escHtml(seg.speaker)}" style="background:rgba(255,255,255,0.02); border-left: 3px solid var(--accent-cyan); border-radius:0 8px 8px 0; padding:12px 16px; cursor:pointer; transition:all 0.2s;" title="클릭 시 회의록 PDF의 해당 페이지 열기 (노란색 형광펜 강조)">
-                        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;">
-                          <span style="font-weight:700; color:var(--accent-cyan); font-size:13.5px;">👤 ${escHtml(seg.speaker)}</span>
-                          <span style="font-weight:700; color:#22d3ee; font-size:12.5px;">📄 PDF ${seg.page}페이지 🔗</span>
-                        </div>
-                        <div class="timeline-bubble" style="font-size:14.5px; line-height:1.75; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); padding:10px 14px; border-radius:6px; color:var(--text-primary); font-weight:500;">
-                          ${escHtml(formatSpeechText(seg.text))}
-                        </div>
-                      </div>
-                    `;
-                  }).join('');
-                })()}
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-
-    document.getElementById('btn-download-speaker-all').onclick = () => {
-      let txtContent = `👤 [${keyword} 의원 국회 전체 발언 원문 리포트]\n`;
-      txtContent += `총 발언 수: ${speechMatches.length}건\n`;
-      txtContent += `==================================================\n\n`;
-
-      speechMatches.forEach((match, idx) => {
-        txtContent += `■ [${match.meeting.date}] ${match.meeting.filename.replace(/\.pdf$/i, '')} | PDF: ${match.line.page}p\n`;
-        txtContent += ` - ${match.line.text.trim()}\n\n`;
-      });
-
-      const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `${keyword}_전체발언_리포트.txt`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    };
-
-    listEl.querySelectorAll('.speech-timeline-node').forEach(el => {
-      el.onclick = (e) => {
-        e.stopPropagation();
-        const page = parseInt(el.dataset.page);
-        const filename = el.dataset.filename;
-        const text = el.dataset.text || '';
-        const speaker = el.dataset.speaker || '';
-        openPdfWithHighlight(filename, page, text, speaker);
-      };
-    });
-
-    listEl.querySelectorAll('.meeting-group-header').forEach(el => {
-      el.onclick = (e) => {
-        e.stopPropagation();
-        openModal(STATE.db.meetings[parseInt(el.dataset.idx)]);
-      };
-    });
-
-    if (shouldUpdate) updateHash();
-    return;
-  }
-
-  // 4. [키워드 OR 검색 / 일반 키워드 검색] : 쉼표가 있거나 일반 텍스트
-  const orKws = keyword.split(',').map(k => {
-    let clean = k.trim().toLowerCase();
-    clean = clean.replace(/\s*(통과|합의|반대|규제|진흥|개정|제정|폐지|상정|의결|처리|논의|보고|제출|검토|법안|개정안|법|의안)\s*$/, '').trim();
-    return clean;
-  }).filter(Boolean);
-  const matchedSpeeches = [];
-
-  STATE.db.meetings.forEach(m => {
-    (m.speakers || []).forEach(s => {
-      if (s.lines && s.lines.length > 0) {
-        const mergedTurns = getSpeakerMergedTurns(s.lines, s.name);
-        mergedTurns.forEach(turn => {
-          const matchedKw = orKws.find(kw => matchKeyword(turn.text, kw));
-          if (matchedKw) {
-            matchedSpeeches.push({
-              meeting: m,
-              speaker: turn.name,
-              text: turn.text,
-              page: turn.page,
-              line: { text: turn.text, page: turn.page },
-              lineIdx: turn.lineIdxs[0],
-              matchedKw: matchedKw
-            });
-          }
+        let idx = 1;
+        matchedMeetings.forEach(m => {
+          m.matched_speeches.forEach(s => {
+            txtContent += `[#${idx++}] 날짜: ${m.date} | 회의명: ${m.filename.replace(/\.pdf$/i, '')} | PDF: ${s.page}p\n`;
+            txtContent += ` - 발언자: ${s.speaker}\n`;
+            txtContent += ` - 발언 원문: ${s.content.trim()}\n\n`;
+          });
         });
-      }
-    });
-  });
 
-  titleEl.textContent = `🔍 "${orKws.join(', ')}" 관련 발언 실시간 검색 (${matchedSpeeches.length}건)`;
+        const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `${keyword}_발언보고서.txt`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+    } else {
+      document.getElementById('btn-download-kws-all').onclick = () => {
+        let txtContent = `🔍 ['${keyword}' 국회 발언 히스토리 전체 원문]\n`;
+        txtContent += `총 발언 수: ${totalSpeeches}건\n`;
+        txtContent += `==================================================\n\n`;
 
-  if (matchedSpeeches.length === 0) {
-    listEl.innerHTML = `<div class="no-results" style="padding:20px"><p>'${orKws.join(', ')}' 관련 발언 기록이 없습니다.</p></div>`;
-    return;
-  }
+        matchedMeetings.forEach(m => {
+          m.matched_speeches.forEach(s => {
+            txtContent += `■ [\&nbsp;${m.date}] ${m.filename.replace(/\.pdf$/i, '')} | PDF: ${s.page}p\n`;
+            txtContent += ` - [${s.speaker}] ${s.content.trim()}\n\n`;
+          });
+        });
 
-  const displayMatches = matchedSpeeches.slice(0, 30); // 최근 30건 노출로 확대
-
-  // 회의록별 그룹화
-  const groups = [];
-  displayMatches.forEach(match => {
-    let group = groups.find(g => g.meeting === match.meeting);
-    if (!group) {
-      group = { meeting: match.meeting, items: [] };
-      groups.push(group);
+        const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `키워드검색_${keyword.replace(/\s*&\s*/g, '_')}.txt`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
     }
-    group.items.push(match);
-  });
 
-  listEl.innerHTML = `
-    <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-      <span style="font-size:13px; color:#cbd5e1; font-weight:500;">최근 발언 30건이 회의록별로 묶여서 정렬됩니다.</span>
-      <button id="btn-download-kws-all" class="kw-compare-btn" style="font-size:12px; padding:6px 12px; background:rgba(245,158,11,0.2); border:1px solid rgba(245,158,11,0.4); border-radius:6px; color:#fcd34d; font-weight:600; cursor:pointer;">📥 전체 발언 원문 파일 다운로드 (.txt)</button>
-    </div>
-    <div class="speech-timeline-list">
-      ${groups.map(group => {
-        let cleanTitle = group.meeting.filename?.replace(/\.PDF?$/i, '').replace(/\s*\(1\)\s*$/, '') || '';
-        cleanTitle = cleanTitle.replace(/^제22대국회\s+/, '');
-
-        return `
-          <div class="meeting-group-card" style="background:rgba(255,255,255,0.035); border:1px solid var(--border-color); border-radius:12px; padding:18px; margin-bottom:16px;">
-            <div class="meeting-group-header" data-idx="${STATE.db.meetings.indexOf(group.meeting)}" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:12px; cursor:pointer;" title="클릭 시 회의록 상세 분석 모달 열기">
-              <span style="font-weight:700; font-size:16px; color:var(--accent-amber);">${escHtml(cleanTitle)}</span>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span style="font-size:13px; color:#cbd5e1; font-weight:600;">📅 ${group.meeting.date}</span>
-                <span class="card-badge badge-${group.meeting.meeting_type}" style="font-size:10px;">${escHtml(group.meeting.meeting_type)}</span>
-              </div>
-            </div>
-            <div style="display:flex; flex-direction:column; gap:12px;">
-              ${(() => {
-                const mergedItems = mergeConsecutiveTimelineItems(group.items);
-                return mergedItems.map(seg => {
-                  let highlightedLine = escHtml(formatSpeechText(seg.text));
-                  orKws.forEach(kw => {
-                    const regex = new RegExp(`(${kw})`, 'gi');
-                    highlightedLine = highlightedLine.replace(regex, '<mark class="search-highlight" style="background:#eab308; color:#000; font-weight:bold; border-radius:2px; padding:0 2px;">$1</mark>');
-                  });
-
-                  return `
-                    <div class="speech-timeline-node" data-page="${seg.page}" data-filename="${escHtml(group.meeting.filename)}" data-text="${escHtml(seg.text)}" data-speaker="${escHtml(seg.speaker)}" style="background:rgba(255,255,255,0.02); border-left: 3px solid var(--accent-amber); border-radius:0 8px 8px 0; padding:12px 16px; cursor:pointer; transition:all 0.2s;" title="클릭 시 회의록 PDF의 해당 페이지 열기 (노란색 형광펜 강조)">
-                      <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-secondary); margin-bottom:4px;">
-                        <span style="font-weight:700; color:var(--text-accent); font-size:13.5px;">👤 ${escHtml(seg.speaker)}</span>
-                        <span style="font-weight:700; color:#22d3ee; font-size:12.5px;">📄 PDF ${seg.page}페이지 🔗</span>
-                      </div>
-                      <div class="timeline-bubble" style="font-size:14.5px; line-height:1.75; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); padding:10px 14px; border-radius:6px; color:var(--text-primary); font-weight:500;">${highlightedLine}</div>
-                    </div>
-                  `;
-                }).join('');
-              })()}
-            </div>
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
-
-  document.getElementById('btn-download-kws-all').onclick = () => {
-    let txtContent = `🔍 ['${orKws.join(', ')}' 국회 발언 히스토리 전체 원문]\n`;
-    txtContent += `총 발언 수: ${matchedSpeeches.length}건\n`;
-    txtContent += `==================================================\n\n`;
-
-    matchedSpeeches.forEach((match, idx) => {
-      txtContent += `■ [${match.meeting.date}] ${match.meeting.filename.replace(/\.pdf$/i, '')} | PDF: ${match.line.page}p\n`;
-      txtContent += ` - [${match.speaker}] ${match.line.text.trim()}\n\n`;
+    // PDF 클릭 바인딩
+    listEl.querySelectorAll('.speech-timeline-node').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const page = parseInt(el.dataset.page);
+        const filename = el.dataset.filename;
+        const text = el.dataset.text || '';
+        const speaker = el.dataset.speaker || '';
+        openPdfWithHighlight(filename, page, text, speaker);
+      };
     });
 
-    const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `키워드검색_${orKws.join('_')}.txt`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+    // 헤더 클릭 시 상세 모달 바인딩
+    listEl.querySelectorAll('.meeting-group-header').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const filename = el.dataset.filename;
+        const matched = STATE.db.meetings.find(x => x.filename === filename);
+        if (matched) openModal(matched);
+      };
+    });
 
-  listEl.querySelectorAll('.speech-timeline-node').forEach(el => {
-    el.onclick = (e) => {
-      e.stopPropagation();
-      const page = parseInt(el.dataset.page);
-      const filename = el.dataset.filename;
-      const text = el.dataset.text || '';
-      const speaker = el.dataset.speaker || '';
-      openPdfWithHighlight(filename, page, text, speaker);
-    };
-  });
-
-  listEl.querySelectorAll('.meeting-group-header').forEach(el => {
-    el.onclick = (e) => {
-      e.stopPropagation();
-      openModal(STATE.db.meetings[parseInt(el.dataset.idx)]);
-    };
-  });
-
-  // 트렌드 차트 업데이트
-  updateTrendForKeyword(orKws[0]);
-
-  if (shouldUpdate) {
-    updateHash();
+    if (shouldUpdate) updateHash();
+  } catch (err) {
+    console.error("Search failed", err);
+    listEl.innerHTML = `<div class="error" style="padding:20px"><p>검색 도중 에러가 발생했습니다: ${err.message}</p></div>`;
   }
 }
 
-/**
- * 2개 키워드 비교 검색 (두 단어가 교집합으로 모두 등장하는 회의록 필터링)
- */
 function searchKeywordCompare() {
   if (STATE.compareKeywords.length === 0) {
     document.getElementById('kw-results-list').innerHTML = '<div class="no-results" style="padding:20px"><p>좌측 단어를 클릭하여 비교를 시작하세요.</p></div>';
@@ -3432,7 +3224,7 @@ function escHtml(str) {
 function formatSpeechText(txt) {
   if (!txt) return '';
   txt = txt.trim();
-  if (txt.startsWith('ㅇ')) return txt;
+  if (txt.startsWith('ㅇ') || txt.startsWith('ㅁ') || txt.startsWith('-') || txt.startsWith('※')) return txt;
 
   // 물음표(?) 및 마침표(.) 뒤에 공백이 있는 부분을 기준으로 문장 나누기
   const sentences = txt.split(/(?<=\?|\.)\s+/);
@@ -3532,10 +3324,17 @@ function mergeConsecutiveTimelineItems(items) {
       const sameSpeaker = current.speaker === speakerName;
       const sameMeeting = current.meeting === item.meeting;
       const samePage = current.page === itemPage;
-      const consecutiveIdx = item.lineIdx === lastIdx + 1;
+      
+      // 만약 둘 다 lineIdx가 정의되어 있다면 엄격하게 연속성 검사. 
+      // API 통신 결과 등으로 lineIdx가 없는 경우(undefined) 같은 페이지/같은 발언자라면 병합 처리
+      const consecutiveIdx = (item.lineIdx !== undefined && lastIdx !== undefined)
+        ? (item.lineIdx === lastIdx + 1)
+        : true;
       
       if (sameSpeaker && sameMeeting && samePage && consecutiveIdx) {
-        current.text += " " + itemText;
+        const trimmed = itemText.trim();
+        const needsNewline = trimmed.startsWith('ㅁ') || trimmed.startsWith('ㅇ') || trimmed.startsWith('-') || trimmed.startsWith('※');
+        current.text += (needsNewline ? "\n" : " ") + itemText;
         current.lineIdxs.push(item.lineIdx);
       } else {
         merged.push(current);
