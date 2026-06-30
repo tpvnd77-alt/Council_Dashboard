@@ -174,9 +174,17 @@ async function loadData() {
   const loadSub = document.getElementById('loading-sub');
   try {
     loadSub.textContent = '서버에서 회의록 목록 로드 중...';
-    // 브라우저 디스크 캐시 방지를 위해 캐시 버스팅(Cache Busting) 쿼리 적용
-    const resp = await fetch('/api/meetings?v=' + Date.now());
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    let resp;
+    try {
+      // 1. 서버 API 호출 시도 (Vercel / Local Dev Server)
+      resp = await fetch('/api/meetings?v=' + Date.now());
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    } catch (apiErr) {
+      console.warn("API fetch 실패, 로컬 JSON Fallback을 시도합니다.", apiErr);
+      // 2. 실패 시 로컬 data/meetings.json 파일 로드 시도 (GitHub Pages 및 오프라인 대비)
+      resp = await fetch('data/meetings.json?v=' + Date.now());
+      if (!resp.ok) throw new Error(`Local Fallback 실패 (API: ${apiErr.message}, JSON: HTTP ${resp.status})`);
+    }
     
     STATE.db = await resp.json();
     
@@ -203,7 +211,7 @@ async function loadData() {
     // 로드 후 URL 라우팅 적용
     handleRouting();
   } catch (err) {
-    console.warn("API fetch 실패. file:// 프로토콜 테스트용 더미 모드를 검토합니다.", err);
+    console.warn("데이터 로드 최종 실패.", err);
     tryDummyLoad(err);
   }
 }
