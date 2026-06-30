@@ -53,9 +53,9 @@ except ImportError:
     from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 # --- [1. 설정 및 API 키] ---
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8670951338:AAGJIXEYY4FdLIr0gJ_QrG420q0-EbrX-nw")
-ADMIN_ID = os.environ.get("ADMIN_ID", "-1003887366166")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyC6JBPRhIyiOuvY__zD3WlWVHAA-UIYQBo")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+ADMIN_ID = os.environ.get("ADMIN_ID")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 PDF_DIR = os.path.join(BASE_DIR, "pdf_22nd")
 
 if not os.path.exists(PDF_DIR):
