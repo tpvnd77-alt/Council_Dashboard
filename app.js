@@ -407,8 +407,27 @@ function handleRouting() {
     if (name) {
       setTimeout(() => {
         const sel = document.getElementById('speaker-meeting-select');
-        fetch('/api/search?speaker=' + encodeURIComponent(name))
-          .then(r => r.json())
+        const performSearch = async () => {
+          try {
+            const r = await fetch('/api/search?speaker=' + encodeURIComponent(name));
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return await r.json();
+          } catch (apiErr) {
+            console.warn("Speaker API search failed, using local fallback", apiErr);
+            const matched = [];
+            if (STATE.db && STATE.db.meetings) {
+              STATE.db.meetings.forEach(m => {
+                const hasSpeaker = (m.speakers || []).some(s => s.name.replace(/^(위원장|소위원장|의원|간사)\s+/, '').trim() === name);
+                if (hasSpeaker) {
+                  matched.push({ filename: m.filename });
+                }
+              });
+            }
+            return { success: true, matched_meetings: matched };
+          }
+        };
+
+        performSearch()
           .then(res => {
             if (res.success && res.matched_meetings && res.matched_meetings.length > 0) {
               const matchedFilename = res.matched_meetings[0].filename;
@@ -788,12 +807,22 @@ async function openModal(mMetadata) {
     document.getElementById('modal-keywords').innerHTML = '';
 
     // Fetch full meeting detail
-    const resp = await fetch('/api/meetings?filename=' + encodeURIComponent(mMetadata.filename));
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    if (!data.success || !data.meeting) throw new Error('상세 데이터를 불러올 수 없습니다.');
-    
-    const m = data.meeting;
+    let m;
+    try {
+      const resp = await fetch('/api/meetings?filename=' + encodeURIComponent(mMetadata.filename));
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (!data.success || !data.meeting) throw new Error('상세 데이터를 불러올 수 없습니다.');
+      m = data.meeting;
+    } catch (apiErr) {
+      console.warn("API 상세 정보 fetch 실패. 로컬 STATE.db.meetings 검색을 시도합니다.", apiErr);
+      if (STATE.db && STATE.db.meetings) {
+        m = STATE.db.meetings.find(x => x.filename === mMetadata.filename);
+      }
+      if (!m) {
+        throw new Error(`상세 데이터를 불러올 수 없습니다: ${apiErr.message}`);
+      }
+    }
     STATE.lastOpenMeeting = m; // 모달 복원을 위해 저장
     STATE.selectedSpeakers = []; // 초기화
 
@@ -1714,11 +1743,21 @@ function initSpeakerTab() {
     }
     const selectedMeetingMeta = meetings[parseInt(idx)];
     try {
-      const detailResp = await fetch('/api/meetings?filename=' + encodeURIComponent(selectedMeetingMeta.filename));
-      const detailData = await detailResp.json();
-      if (detailData.success && detailData.meeting) {
-        renderSpeakersForMeeting(detailData.meeting);
-        renderSpeakersOverview(detailData.meeting); // 선택된 회의록의 발언 통계 차트로 갱신
+      let meetingDetail;
+      try {
+        const detailResp = await fetch('/api/meetings?filename=' + encodeURIComponent(selectedMeetingMeta.filename));
+        if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
+        const detailData = await detailResp.json();
+        if (!detailData.success || !detailData.meeting) throw new Error('상세 데이터를 불러올 수 없습니다.');
+        meetingDetail = detailData.meeting;
+      } catch (apiErr) {
+        console.warn("Failed to load speaker meeting details from API, using fallback", apiErr);
+        meetingDetail = selectedMeetingMeta;
+      }
+      
+      if (meetingDetail) {
+        renderSpeakersForMeeting(meetingDetail);
+        renderSpeakersOverview(meetingDetail); // 선택된 회의록의 발언 통계 차트로 갱신
       }
     } catch (e) {
       console.error("Failed to load speaker meeting details", e);
@@ -2771,6 +2810,181 @@ async function searchKeyword(keyword, shouldUpdate = true) {
     return;
   }
 
+  function localSearchFallback(isSpeakerOnly, keyword) {
+    if (!STATE.db || !STATE.db.meetings) return [];
+    const matchedMeetings = [];
+
+    const sanitizeText = (txt) => {
+      if (!txt) return '';
+      let cleaned = txt.replace(/\d+\s+제\d+회\s*-\s*[가-힣\s\(\)]+?\(\d{4}년\s*\d{1,2}월\s*\d{1,2}일\)/g, '');
+      cleaned = cleaned.replace(/^\d+\s+제\d+회-.*?$/gm, '');
+      return cleaned.trim();
+    };
+
+    const getSpeakerMergedTurns = (lines, speakerName) => {
+      if (!lines || lines.length === 0) return [];
+      const merged = [];
+      let current = null;
+      
+      lines.forEach((line, idx) => {
+        const cleanedText = sanitizeText(line.text || line.content);
+        if (!cleanedText) return;
+
+        const page = line.page || 1;
+
+        if (!current) {
+          current = {
+            name: speakerName,
+            text: cleanedText,
+            page: page,
+            lineIdxs: [idx]
+          };
+        } else {
+          const lastIdx = current.lineIdxs[current.lineIdxs.length - 1];
+          if (idx === lastIdx + 1 && page === current.page) {
+            current.text += " " + cleanedText;
+            current.lineIdxs.push(idx);
+          } else {
+            merged.push(current);
+            current = {
+              name: speakerName,
+              text: cleanedText,
+              page: page,
+              lineIdxs: [idx]
+            };
+          }
+        }
+      });
+      if (current) {
+        merged.push(current);
+      }
+      return merged;
+    };
+
+    const matchKeyword = (text, kw) => {
+      if (!text || !kw) return false;
+      const cleanText = text.toLowerCase();
+      const cleanKw = kw.toLowerCase();
+      const isEnglishAcronym = /^[a-z0-9_-]+$/i.test(cleanKw);
+      if (isEnglishAcronym) {
+        const escaped = cleanKw.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp('\\b' + escaped + '\\b', 'i');
+        return regex.test(cleanText);
+      }
+      return cleanText.includes(cleanKw);
+    };
+
+    if (isSpeakerOnly) {
+      const cleanSpkParam = keyword.trim().toLowerCase();
+      for (const m of STATE.db.meetings) {
+        const matchedSpeeches = [];
+        for (const spk of (m.speakers || [])) {
+          if (spk.name.toLowerCase().includes(cleanSpkParam)) {
+            const turns = getSpeakerMergedTurns(spk.lines, spk.name);
+            for (const turn of turns) {
+              matchedSpeeches.push({
+                speaker: turn.name,
+                content: turn.text,
+                page: turn.page
+              });
+            }
+          }
+        }
+        if (matchedSpeeches.length > 0) {
+          matchedMeetings.push({
+            filename: m.filename,
+            date: m.date,
+            summary: m.summary,
+            session_num: m.session_num,
+            session_type: m.session_type,
+            order_num: m.order_num,
+            meeting_type: m.meeting_type,
+            year: m.year,
+            matched_speeches: matchedSpeeches
+          });
+        }
+      }
+    } else if (keyword.includes('&')) {
+      const parts = keyword.split('&').map(p => p.trim());
+      const speaker = parts[0];
+      const keywordGroups = parts.slice(1);
+
+      for (const m of STATE.db.meetings) {
+        const matchedSpeeches = [];
+        for (const spk of (m.speakers || [])) {
+          if (spk.name.toLowerCase().includes(speaker.toLowerCase())) {
+            const turns = getSpeakerMergedTurns(spk.lines, spk.name);
+            for (const turn of turns) {
+              let matchAll = true;
+              for (const group of keywordGroups) {
+                const kws = group.split(',').map(k => k.trim()).filter(Boolean);
+                if (!kws.some(kw => matchKeyword(turn.text, kw))) {
+                  matchAll = false;
+                  break;
+                }
+              }
+              if (matchAll) {
+                matchedSpeeches.push({
+                  speaker: turn.name,
+                  content: turn.text,
+                  page: turn.page
+                });
+              }
+            }
+          }
+        }
+
+        if (matchedSpeeches.length > 0) {
+          matchedMeetings.push({
+            filename: m.filename,
+            date: m.date,
+            summary: m.summary,
+            session_num: m.session_num,
+            session_type: m.session_type,
+            order_num: m.order_num,
+            meeting_type: m.meeting_type,
+            year: m.year,
+            matched_speeches: matchedSpeeches
+          });
+        }
+      }
+    } else {
+      const orKws = keyword.split(',').map(k => k.trim()).filter(Boolean);
+
+      for (const m of STATE.db.meetings) {
+        const matchedSpeeches = [];
+        for (const spk of (m.speakers || [])) {
+          const turns = getSpeakerMergedTurns(spk.lines, spk.name);
+          for (const turn of turns) {
+            if (orKws.some(kw => matchKeyword(turn.text, kw))) {
+              matchedSpeeches.push({
+                speaker: turn.name,
+                content: turn.text,
+                page: turn.page
+              });
+            }
+          }
+        }
+
+        if (matchedSpeeches.length > 0) {
+          matchedMeetings.push({
+            filename: m.filename,
+            date: m.date,
+            summary: m.summary,
+            session_num: m.session_num,
+            session_type: m.session_type,
+            order_num: m.order_num,
+            meeting_type: m.meeting_type,
+            year: m.year,
+            matched_speeches: matchedSpeeches
+          });
+        }
+      }
+    }
+
+    return matchedMeetings;
+  }
+
   // 2. [일반 키워드 및 의원 혼합 검색] - 백엔드 API 연동
   listEl.innerHTML = `
     <div class="loading-spinner-small" style="text-align:center; padding:30px;">
@@ -2796,11 +3010,17 @@ async function searchKeyword(keyword, shouldUpdate = true) {
     url = '/api/search?q=' + encodeURIComponent(keyword);
   }
 
+  let matchedMeetings = [];
   try {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    const matchedMeetings = data.matched_meetings || [];
+    matchedMeetings = data.matched_meetings || [];
+  } catch (apiErr) {
+    console.warn("API 검색 실패. 로컬 데이터에서 분석을 실행합니다.", apiErr);
+    matchedMeetings = localSearchFallback(isSpeakerOnly, keyword);
+  }
+  try {
 
     const totalSpeeches = matchedMeetings.reduce((acc, m) => acc + (m.matched_speeches || []).length, 0);
 
