@@ -183,6 +183,12 @@ def extract_metadata_from_filename(filename):
     }
 
 
+INVALID_SUBSTRINGS = [
+    "의안", "청원", "보고", "출석", "출장", "입법", "의사", "질의", "답변", "속기", "개의", "산회", 
+    "유인물", "서면", "자료", "배부", "비공개", "간담회", "토론", "의결", "소관", "진행", "일정", "상정", "기타"
+]
+
+
 def normalize_speaker_name(raw_name):
     """
     발언자 이름 정규화.
@@ -193,6 +199,8 @@ def normalize_speaker_name(raw_name):
     if len(name) > 8 or re.search(r'[0-9]', name):
         return None
     if not re.match(r'^[가-힣]{2,8}$', name):
+        return None
+    if any(sub in name for sub in INVALID_SUBSTRINGS):
         return None
     return name
 
@@ -932,6 +940,24 @@ def summarize_fact(spk, sent, is_member=True):
     return f"- **{spk}**{role_suffix}, {converted}"
 
 
+def check_is_member(name, speaker_titles=None):
+    COMMISSION_MEMBERS = {
+        "최민희", "최형두", "김현", "노종면", "이정헌", "황정아", "박충권", "이훈기", 
+        "이상휘", "박정훈", "김장겸", "이준석", "정동영", "이해민", "최수진", "한민수", 
+        "조인철", "박민규", "김우영", "신성범", "권영진", "신동욱", "김남근", "김영배", "정일영"
+    }
+    if name in COMMISSION_MEMBERS:
+        return True
+    if speaker_titles:
+        title_val = speaker_titles.get(name, "")
+        if title_val:
+            is_special_officer = any(x in title_val for x in ["정부위원", "수석전문위원", "전문위원"])
+            is_lawmaker_role = any(x in title_val for x in ["위원", "위원장", "간사", "의원"])
+            if is_lawmaker_role and not is_special_officer:
+                return True
+    return False
+
+
 def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speaker_titles=None):
     """
     국회 대응 CR 전문가 어조의 [상황 보고서(Status Report)] 포맷으로 요약 생성 (개선 v3)
@@ -942,12 +968,6 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
     # 참석자 정보 조립
     member_list = []
     officer_list = []
-    
-    COMMISSION_MEMBERS = {
-        "최민희", "최형두", "김현", "노종면", "이정헌", "황정아", "박충권", "이훈기", 
-        "이상휘", "박정훈", "김장겸", "이준석", "정동영", "이해민", "최수진", "한민수", 
-        "조인철", "박민규", "김우영", "신성범", "권영진", "신동욱", "김남근", "김영배", "정일영"
-    }
     
     for name in sorted(speakers_dict.keys()):
         if name in ["위원장", "소위원장", "위원장대행", "속기사"]:
@@ -961,7 +981,7 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
         else:
             display_name = name
             
-        if name in COMMISSION_MEMBERS:
+        if check_is_member(name, speaker_titles):
             member_list.append(display_name)
         else:
             officer_list.append(display_name)
@@ -1061,7 +1081,7 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
         q_sents = [s.strip() for s in re.split(r'[.。!?]\s*', turn["text"]) if s.strip()]
         for sent in q_sents:
             if len(sent) >= 35 and any(k in sent for k in top_kws[:3]) and count < 3:
-                is_member = spk in COMMISSION_MEMBERS
+                is_member = check_is_member(spk, speaker_titles)
                 fact_str = summarize_fact(spk, sent, is_member)
                 if fact_str:
                     facts.append(fact_str)
@@ -1094,7 +1114,7 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
             "장관", "차관", "사장", "원장", "처장", "청장", "방통위", "방송미디어통신위", "국장", "과장", "기획관", "단장", 
             "실장", "본부장", "진술인", "참고인", "증인", "대행", "배경훈", "유상임", "이진숙", "박민", "김태규", "최성희", "류제명"
         ])
-        if (is_officer or k not in COMMISSION_MEMBERS) and k not in MODERATORS:
+        if (is_officer or not check_is_member(k, speaker_titles)) and k not in MODERATORS:
             respondents_set.add(k)
 
     PROCEDURAL_WORDS = ["성원이 되었으므로", "개회하겠습", "개의하겠습", "개의를 선포", "의사일정", "선포합니다", "의석을 정돈", "보고해 주시기", " 개의하도록", "상정합니다", "의안번호", "개회를 선포"]
@@ -1104,7 +1124,7 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
         q_spk = turn_q["speaker"]
         
         # 질의자 자격 조건
-        if q_spk in MODERATORS or q_spk in respondents_set or q_spk not in COMMISSION_MEMBERS:
+        if q_spk in MODERATORS or q_spk in respondents_set or not check_is_member(q_spk, speaker_titles):
             continue
             
         q_text = turn_q["text"]
@@ -1145,7 +1165,7 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
             issue_name = "현안질의"
             
         spk_title = speaker_titles.get(q_spk, "위원") if speaker_titles else "위원"
-        if "위원" not in spk_title and q_spk in COMMISSION_MEMBERS:
+        if "위원" not in spk_title and check_is_member(q_spk, speaker_titles):
             spk_title = "위원"
             
         qa_item = (

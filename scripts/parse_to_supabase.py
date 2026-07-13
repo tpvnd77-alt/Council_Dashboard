@@ -178,11 +178,18 @@ def extract_metadata_from_filename(filename):
         "year": year,
     }
 
+INVALID_SUBSTRINGS = [
+    "의안", "청원", "보고", "출석", "출장", "입법", "의사", "질의", "답변", "속기", "개의", "산회", 
+    "유인물", "서면", "자료", "배부", "비공개", "간담회", "토론", "의결", "소관", "진행", "일정", "상정", "기타"
+]
+
 def normalize_speaker_name(raw_name):
     name = TITLE_PREFIXES.sub('', raw_name).strip()
     if len(name) > 8 or re.search(r'[0-9]', name):
         return None
     if not re.match(r'^[가-힣]{2,8}$', name):
+        return None
+    if any(sub in name for sub in INVALID_SUBSTRINGS):
         return None
     return name
 
