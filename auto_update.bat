@@ -14,6 +14,9 @@ echo [%DATE% %TIME%] 업데이트 시작 >> "%LOG_FILE%"
 
 cd /d "%SCRIPT_DIR%"
 
+REM 0. 텔레그램 봇 다운로드 폴더로부터 신규 PDF 동기화
+xcopy /d /y "C:\Users\hp\.gemini\antigravity\scratch\telegram_bot_dashboard\bots\bills_council\pdf_22nd\*.pdf" "C:\Users\hp\bills_council\pdf_22nd\" >> "%LOG_FILE%" 2>&1
+
 REM 1. 로컬 JSON 빌드 (Fallback 및 Github Pages용)
 %PYTHON% -X utf8 "%SCRIPT_DIR%\parse_pdfs.py" >> "%LOG_FILE%" 2>&1
 
