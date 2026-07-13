@@ -213,7 +213,8 @@ def get_speaker_titles(full_text, speaker_names):
     TITLE_WORDS = {
         "소위원장", "위원장", "위원", "전문위원", "수석전문위원", "정부위원", 
         "차관", "장관", "부처장", "원장", "처장", "청장", "부장관", "실장", 
-        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관"
+        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관",
+        "위원장대행", "임시위원장", "간사"
     }
     
     for line in full_text.split('\n'):
@@ -376,7 +377,8 @@ def extract_speakers_and_text_with_page(page_texts):
     TITLE_WORDS = {
         "소위원장", "위원장", "위원", "전문위원", "수석전문위원", "정부위원", 
         "차관", "장관", "부처장", "원장", "처장", "청장", "부장관", "실장", 
-        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관"
+        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관",
+        "위원장대행", "임시위원장", "간사"
     }
 
     global_line_idx = 0
@@ -1110,7 +1112,7 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
     respondents_set = set()
     for k in speakers_dict.keys():
         title_val = speaker_titles.get(k, "") if speaker_titles else ""
-        is_officer = any(r in k or r in title_val for r in [
+        is_officer = any(r in k or (r in title_val and "위원장" not in title_val and "소위원장" not in title_val) for r in [
             "장관", "차관", "사장", "원장", "처장", "청장", "방통위", "방송미디어통신위", "국장", "과장", "기획관", "단장", 
             "실장", "본부장", "진술인", "참고인", "증인", "대행", "배경훈", "유상임", "이진숙", "박민", "김태규", "최성희", "류제명"
         ])
@@ -1155,28 +1157,25 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
         if matched_a_turn:
             a_spk = matched_a_turn["speaker"]
             a_fact = matched_a_turn["fact"]
-        else:
-            a_spk = "정부 관계자"
-            a_fact = "소관 현안에 대해 관계 부처에서 충분한 검토를 거쳐 신속히 조치하겠다고 언급함."
             
-        q_fact = summarize_question(q_text)
-        issue_name = top_kws[qa_count % len(top_kws)] if top_kws else "정합성 검토"
-        if "관한법" in issue_name:
-            issue_name = "현안질의"
-            
-        spk_title = speaker_titles.get(q_spk, "위원") if speaker_titles else "위원"
-        if "위원" not in spk_title and check_is_member(q_spk, speaker_titles):
-            spk_title = "위원"
-            
-        qa_item = (
-            f"▲ [{issue_name}]\n"
-            f"- [질의 요지] {q_spk} {spk_title}(과방위) | {q_fact}\n"
-            f"- | {a_spk} | {a_fact}"
-        )
-        qa_list.append(qa_item)
-        qa_count += 1
-        if qa_count >= 5:
-            break
+            q_fact = summarize_question(q_text)
+            issue_name = top_kws[qa_count % len(top_kws)] if top_kws else "정합성 검토"
+            if "관한법" in issue_name:
+                issue_name = "현안질의"
+                
+            spk_title = speaker_titles.get(q_spk, "위원") if speaker_titles else "위원"
+            if "위원" not in spk_title and check_is_member(q_spk, speaker_titles):
+                spk_title = "위원"
+                
+            qa_item = (
+                f"▲ [{issue_name}]\n"
+                f"- [질의 요지] {q_spk} {spk_title}(과방위) | {q_fact}\n"
+                f"- | {a_spk} | {a_fact}"
+            )
+            qa_list.append(qa_item)
+            qa_count += 1
+            if qa_count >= 5:
+                break
 
     # 4. 문서 최종 조립 (보고서 가이드 완벽 준수)
     report_lines = []
@@ -1192,9 +1191,13 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
     for r in ref_issues[:1]:
         report_lines.append(f" ※ {r}\n")
         
-    report_lines.append("2. 주요 질의 및 답변 (Detailed Q&A):")
-    for qa in qa_list:
-        report_lines.append(f" {qa}\n")
+    if qa_list:
+        report_lines.append("2. 주요 질의 및 답변 (Detailed Q&A):")
+        for qa in qa_list:
+            report_lines.append(f" {qa}\n")
+    else:
+        report_lines.append("2. 주요 질의 및 답변 (Detailed Q&A):")
+        report_lines.append(" - 본 회의는 상임위 구성 및 의사일정 조율 등 절차적 현안 처리를 위해 소집된 회의로서, 소관 부처 대상의 정책 질의 및 답변은 진행되지 않았습니다.\n")
 
     full_report = "\n".join(report_lines)
     # 볼드 처리 적용

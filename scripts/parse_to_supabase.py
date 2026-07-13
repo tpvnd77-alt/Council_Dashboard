@@ -198,7 +198,8 @@ def get_speaker_titles(full_text, speaker_names):
     TITLE_WORDS = {
         "소위원장", "위원장", "위원", "전문위원", "수석전문위원", "정부위원", 
         "차관", "장관", "부처장", "원장", "처장", "청장", "부장관", "실장", 
-        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관"
+        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관",
+        "위원장대행", "임시위원장", "간사"
     }
     
     for line in full_text.split('\n'):
@@ -323,7 +324,8 @@ def extract_speakers_and_text_with_page(page_texts):
     TITLE_WORDS = {
         "소위원장", "위원장", "위원", "전문위원", "수석전문위원", "정부위원", 
         "차관", "장관", "부처장", "원장", "처장", "청장", "부장관", "실장", 
-        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관"
+        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관",
+        "위원장대행", "임시위원장", "간사"
     }
 
     for page_num, text in page_texts:
@@ -449,6 +451,19 @@ def strip_page_noise(text):
         if not is_noise: lines.append(line)
     return "\n".join(lines)
 
+# Load meetings.json as a global lookup dictionary to reuse the premium summaries from parse_pdfs.py
+MEETINGS_JSON_PATH = Path(__file__).parent.parent / "data" / "meetings.json"
+MEETINGS_LOOKUP = {}
+if MEETINGS_JSON_PATH.exists():
+    try:
+        with open(MEETINGS_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for m in data.get("meetings", []):
+                if "filename" in m:
+                    MEETINGS_LOOKUP[m["filename"]] = m.get("summary", "")
+    except Exception as e:
+        print(f"Failed to load meetings.json lookup: {e}")
+
 def parse_pdf(filepath):
     result = {
         "filepath": str(filepath),
@@ -528,14 +543,18 @@ def parse_pdf(filepath):
     speaker_titles = get_speaker_titles(full_text, [info['name'] for info in merged.values()])
     text_only_speakers = {info['name']: info['lines'] for info in merged.values()}
         
-    result["summary"] = extract_speech_summary(
-        text_only_speakers,
-        date=result["date"],
-        title=displayTitle,
-        agendas=[a["title"] for a in result["agendas"]],
-        keywords=result["keywords"],
-        speaker_titles=speaker_titles
-    )
+    cached_summary = MEETINGS_LOOKUP.get(filepath.name)
+    if cached_summary:
+        result["summary"] = cached_summary
+    else:
+        result["summary"] = extract_speech_summary(
+            text_only_speakers,
+            date=result["date"],
+            title=displayTitle,
+            agendas=[a["title"] for a in result["agendas"]],
+            keywords=result["keywords"],
+            speaker_titles=speaker_titles
+        )
     return result
 
 def is_duplicate(filename):
