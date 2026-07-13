@@ -841,8 +841,16 @@ async function openModal(mMetadata) {
   const spks = (m.speakers || []).slice(0, 20);
   
   const getSpeakerRole = (name) => {
+    const isAfterGansaChange = m.date && m.date >= '2026-07-06';
+    
     if (name === '최민희') return { label: '위원장', color: 'rgba(99,102,241,0.15)', text: '#a5b4fc', border: 'rgba(99,102,241,0.3)', class: 'role-member' };
-    if (name === '김현' || name === '최형두') return { label: '간사', color: 'rgba(16,185,129,0.15)', text: '#6ee7b7', border: 'rgba(16,185,129,0.3)', class: 'role-member' };
+    
+    if (isAfterGansaChange) {
+      if (name === '한준호' || name === '최형두') return { label: '간사', color: 'rgba(16,185,129,0.15)', text: '#6ee7b7', border: 'rgba(16,185,129,0.3)', class: 'role-member' };
+    } else {
+      if (name === '김현' || name === '최형두') return { label: '간사', color: 'rgba(16,185,129,0.15)', text: '#6ee7b7', border: 'rgba(16,185,129,0.3)', class: 'role-member' };
+    }
+    
     if (['유상임', '배경훈', '김종철', '이진숙', '박민', '김태규', '구혁채', '류제명', '이복우'].includes(name)) {
       const isOfficer = name === '이복우' ? '수석전문위원' : '정부위원';
       return { label: isOfficer, color: 'rgba(245,158,11,0.15)', text: '#fcd34d', border: 'rgba(245,158,11,0.3)', class: 'role-officer' };
