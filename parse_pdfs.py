@@ -29,6 +29,11 @@ PDF_DIR    = r"C:\Users\hp\bills_council\pdf_22nd"
 OUTPUT_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings.json"
 MAX_PAGES  = 1000
 MAX_WORKERS = 6
+# 파서를 고치면 이 숫자를 올린다. meetings.json 의 캐시가 무효가 되어 전체를 다시 읽는다.
+PARSER_VERSION = 4
+# 회의당 저장할 발언자 수. 25 이던 것을 40 으로 올렸다(2026-09-08).
+# 증인·참고인이 제대로 잡히면서 25위 밖으로 밀려 대시보드에서 사라지는 사람이 생겼다.
+MAX_SPEAKERS_PER_MEETING = 40
 
 # ─── 불용어 (대폭 강화 및 노이즈 직책어/조사/형식어 배제) ───────────────────────────────────────────
 STOPWORDS = set([
@@ -368,18 +373,76 @@ def build_agenda_details(agendas, full_text, meeting_date):
     return details
 
 
+# --- [발언자 판별] -------------------------------------------------------------
+# 회의록의 발언 블록은 '◯이름  발언' 또는 '◯직책  이름 발언' 두 꼴로만 나온다.
+# 그래서 ◯ 뒤가 직책이면 그다음 낱말이 곧 발언자 이름이다.
+# 그 사이에는 출석 명단·의안 회부 목록·행정입법 표처럼 발언이 아닌 블록도 섞인다.
+NON_SPEECH_LABELS = {"출석", "결석", "청가", "정부측", "참석자", "피감사기관", "의안", "관련의안",
+                     "행정입법", "보고서", "송부", "제출", "선임", "선출", "개선", "보임", "사임", "위원인"}
+# 어느 자리에 오든 사람 이름이 아닌 낱말
+NEVER_NAMES = NON_SPEECH_LABELS | {"아닌"}
+# 사람 이름 토큰에는 영문·숫자·㈜ 가 섞이지 않는다. 섞였으면 기관이나 직책이다.
+#   예: '◯쿠팡㈜CISO 브랫매티스' -> 한글만 남기면 '쿠팡' 이 되어 이름처럼 보인다
+NOT_A_NAME_CHAR = re.compile(r'[A-Za-z0-9㈜㈔()（）]')
+# 사람 이름일 수도 있어 애매한 것. 뒤에 표 머리말이 이어질 때만 표로 본다.
+AMBIGUOUS_LABELS = {"위원", "간사", "청원", "보고", "안건"}
+TABLE_STARTERS = {"선임", "선출", "개선", "보임", "사임", "회부", "제출", "참석자", "구분", "및", "계속"}
+# 직책 꼬리말. 이것으로 끝나면 사람 이름이 아니라 직책이다.
+# 한 글자짜리('국', '장')는 절대 넣지 말 것 — 노재국·은현장·이영국이 실제 발언자다.
+SPEAKER_TITLE_SUFFIXES = (
+    "위원장", "상임위원", "수석전문위원", "전문위원", "정부위원", "위원", "의원",
+    "장관", "차관", "증인", "참고인", "진술인", "후보자", "변호인",
+    "이사장", "사무총장", "총장", "사장", "원장", "처장", "실장", "국장", "과장",
+    "본부장", "청장", "단장", "소장", "부장", "팀장", "관장", "차장",
+    "대표이사", "대표", "대리", "대행", "간사", "의장", "감사",
+    "심의관", "정책관", "조정관", "산업관", "기획관", "보좌관", "사무관", "서기관",
+    "비서관", "행정관",
+)
+# 사람 이름 뒤에 붙는 직함(◯김현 위원 …). 앞머리에서 같이 걷어 낸다.
+PERSON_FOLLOWING = {"위원", "의원", "위원장", "소위원장", "간사", "장관", "차관"}
+# 기관 이름 뒤에 붙는 직함(◯쿠팡 대표 브랫매티스 …). 이때는 그다음이 진짜 발언자다.
+ORG_FOLLOWING = {"대표", "대표이사", "임시대표", "사장", "회장", "이사장", "원장", "부사장", "총장", "청장"}
+SPEAKER_NAME_RE = re.compile(r'^[가-힣]{2,8}$')   # 음차된 외국인 이름(해럴드로저스)까지 받는다
+
+
+def looks_like_person_name(word):
+    if not word or not SPEAKER_NAME_RE.match(word):
+        return False
+    if word in NEVER_NAMES or word in AMBIGUOUS_LABELS:
+        return False
+    if any(sub in word for sub in INVALID_SUBSTRINGS):
+        return False
+    return not word.endswith(SPEAKER_TITLE_SUFFIXES)
+
+def parse_marker_line(content):
+    """◯ 를 뗀 줄에서 (발언자, 앞머리로 걷어 낼 낱말 수) 를 돌려준다.
+       발언이 아닌 명단·목록·표면 (None, 0), 판별 못 하면 ("", 0) 을 돌려준다."""
+    words = content.split()
+    if not words:
+        return "", 0
+    raw = list(words[:3]) + ["", "", ""]
+    w = [re.sub(r'[^가-힣]', '', x) for x in words[:3]] + ["", "", ""]
+
+    if w[0] in NON_SPEECH_LABELS:
+        return None, 0
+    if w[0] in AMBIGUOUS_LABELS and w[1] in TABLE_STARTERS:
+        return None, 0
+
+    if looks_like_person_name(w[0]) and not NOT_A_NAME_CHAR.search(raw[0]):
+        # 다만 '◯쿠팡 대표 브랫매티스' 처럼 기관명 + 직함 + 이름인 경우가 있다.
+        if w[1] in ORG_FOLLOWING and looks_like_person_name(w[2]):
+            return w[2], 3
+        return w[0], 2 if w[1] in PERSON_FOLLOWING else 1
+    if looks_like_person_name(w[1]):      # ◯ 뒤가 직책이면 그다음이 이름
+        return w[1], 3 if w[2] in PERSON_FOLLOWING else 2
+    return "", 0
+
+
 def extract_speakers_and_text_with_page(page_texts):
     """발언자 추출. 페이지 번호를 유지하며 ◯/○ 패턴으로 매칭합니다."""
     speakers = {}
     current_speaker = None
     current_text = []
-
-    TITLE_WORDS = {
-        "소위원장", "위원장", "위원", "전문위원", "수석전문위원", "정부위원", 
-        "차관", "장관", "부처장", "원장", "처장", "청장", "부장관", "실장", 
-        "국장", "과장", "사장", "대행", "진술인", "참고인", "증인", "비서관", "행정관",
-        "위원장대행", "임시위원장", "간사"
-    }
 
     global_line_idx = 0
     for page_num, text in page_texts:
@@ -388,59 +451,33 @@ def extract_speakers_and_text_with_page(page_texts):
             if not line:
                 continue
             global_line_idx += 1
-            
-            # line starts with ◯ or ○
+
             if line.startswith('◯') or line.startswith('○'):
-                symbol = line[0]
                 content = line[1:].strip()
-                words = content.split()
-                
-                if len(words) > 0:
-                    w0 = words[0]
-                    w1 = words[1] if len(words) > 1 else ""
-                    w2 = words[2] if len(words) > 2 else ""
-                    
-                    is_w0_name = (2 <= len(w0) <= 4) and re.match(r'^[가-힣]+$', w0) and (w0 not in TITLE_WORDS)
-                    
-                    speaker_name = None
-                    prefix_parts = [symbol]
-                    
-                    if is_w0_name:
-                        speaker_name = w0
-                        prefix_parts.append(w0)
-                        if w1 in TITLE_WORDS or w1 in ["의원", "대표"]:
-                            prefix_parts.append(w1)
+                name, strip_n = parse_marker_line(content)
+
+                if name is None:
+                    # 출석 명단·의안 회부 목록·행정입법 표 같은 블록이다.
+                    # 발언이 아니므로 앞 발언자의 발언에 딸려 붙지 않도록 여기서 끊는다.
+                    if current_speaker and current_text:
+                        speakers.setdefault(current_speaker, []).extend(current_text)
+                    current_speaker, current_text = None, []
+                    continue
+
+                if name:
+                    if current_speaker and current_text:
+                        speakers.setdefault(current_speaker, []).extend(current_text)
+                    current_speaker = name
+
+                    parts = content.split()
+                    if len(parts) <= strip_n:
+                        rest = ""
                     else:
-                        is_w1_name = (2 <= len(w1) <= 4) and re.match(r'^[가-힣]+$', w1) and (w1 not in TITLE_WORDS)
-                        if is_w1_name:
-                            speaker_name = w1
-                            prefix_parts.append(w0)
-                            prefix_parts.append(w1)
-                            if w2 in TITLE_WORDS or w2 in ["의원", "대표"]:
-                                prefix_parts.append(w2)
-                                
-                    if speaker_name:
-                        # Normalize speaker name
-                        norm = normalize_speaker_name(speaker_name)
-                        if norm:
-                            if current_speaker and current_text:
-                                speakers.setdefault(current_speaker, []).extend(current_text)
-                            current_speaker = norm
-                            
-                            # Reconstruct the exact prefix matched to strip it
-                            matched_words_count = len(prefix_parts) - 1 # exclude symbol
-                            line_words = line.split()
-                            prefix_words = line_words[:matched_words_count]
-                            prefix_str = " ".join(prefix_words)
-                            
-                            idx_prefix = line.find(prefix_str)
-                            if idx_prefix != -1:
-                                rest = line[idx_prefix + len(prefix_str):].strip()
-                            else:
-                                rest = line[1:].strip()
-                                
-                            current_text = [{"text": rest, "page": page_num, "idx": global_line_idx}] if rest else []
-                            continue
+                        m = re.match(r'(?:\S+\s+){%d}' % strip_n, content)
+                        rest = content[m.end():].strip() if m else ""
+                    current_text = [{"text": rest, "page": page_num, "idx": global_line_idx}] if rest else []
+                    continue
+
             
             # If it doesn't start with symbol, or didn't match a speaker_name:
             if current_speaker and line:
@@ -1324,7 +1361,7 @@ def parse_pdf(filepath):
             "lines": info['lines']
         })
     speaker_list.sort(key=lambda x: x["speech_count"], reverse=True)
-    result["speakers"] = speaker_list[:25]
+    result["speakers"] = speaker_list[:MAX_SPEAKERS_PER_MEETING]
 
     # 3. 정합성 높은 회의록 제목 조립
     cleanTitle = re.sub(r'^제22대국회\s+과학기술정보방송통신위원회\s+회의록\s+', '', filepath.name.replace('.PDF','').replace('.pdf',''))
@@ -1393,7 +1430,9 @@ def main():
         cached = existing_meetings.get(p.name)
         # 캐시가 있고, 이전 파싱 시 20페이지 제한이 아니었으며(parsed_full 플래그), 파일 크기가 같으면 캐시 재사용
         # (첫 실행 시에는 기존 DB에 parsed_full 플래그가 없으므로 자동으로 전체 재파싱됨)
-        if cached and cached.get("parsed_full") and cached.get("file_size") == p.stat().st_size:
+        if (cached and cached.get("parsed_full")
+                and cached.get("parser_version") == PARSER_VERSION
+                and cached.get("file_size") == p.stat().st_size):
             meetings.append(cached)
             done += 1
             spk_names = [s['name'] for s in cached.get('speakers', [])[:3]]
@@ -1413,6 +1452,7 @@ def main():
                     data = future.result()
                     # 캐시 검증용 추가 메타데이터 기입
                     data["parsed_full"] = True
+                    data["parser_version"] = PARSER_VERSION
                     data["file_size"] = path.stat().st_size
                     meetings.append(data)
                     spk_names = [s['name'] for s in data.get('speakers', [])[:3]]
