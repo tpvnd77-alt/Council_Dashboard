@@ -21,13 +21,15 @@ REM 1. Build local JSON for Github Pages (this is what the dashboard reads)
 %PYTHON% -X utf8 "%SCRIPT_DIR%\parse_pdfs.py" >> "%LOG_FILE%" 2>&1
 SET PARSE_RC=%ERRORLEVEL%
 
-REM 2. Supabase sync. Independent of the Github Pages deploy on purpose:
-REM    the published dashboard reads data/meetings.json only, so a Supabase
-REM    outage must not block deployment. (2026-09-27 ~ 10-02: it did, 6 days.)
-%PYTHON% -X utf8 "%SCRIPT_DIR%\scripts\parse_to_supabase.py" >> "%LOG_FILE%" 2>&1
-SET SUPABASE_RC=%ERRORLEVEL%
+REM 2. Supabase sync removed 2026-10-02. The project no longer exists: its
+REM    <ref>.supabase.co is NXDOMAIN on public resolvers and both poolers
+REM    answer "tenant/user not found". Last good sync was 2026-09-26.
+REM    Nothing live depended on it - the published dashboard reads only
+REM    data/meetings.json, and the Vercel API in api/ was never deployed.
+REM    scripts/parse_to_supabase.py is left in place, just not run. To bring
+REM    it back: put a working SUPABASE_DB_URL in .env and restore this step.
 
-REM 3. Deploy. Gated on parse_pdfs only.
+REM 3. Deploy.
 IF %PARSE_RC% EQU 0 (
     echo [%DATE% %TIME%] parse_pdfs OK - deploying >> "%LOG_FILE%"
     %GIT% add data/meetings.json pdf/ >> "%LOG_FILE%" 2>&1
@@ -42,8 +44,6 @@ IF %PARSE_RC% EQU 0 (
     echo [%DATE% %TIME%] DEPLOY SKIPPED - parse_pdfs failed rc=%PARSE_RC% >> "%LOG_FILE%"
 )
 
-IF NOT %SUPABASE_RC% EQU 0 (
-    echo [%DATE% %TIME%] WARNING supabase sync failed rc=%SUPABASE_RC% - Github Pages is still current >> "%LOG_FILE%"
-)
 
-echo ---------------------------------------- >> "%LOG_FILE%"
+
+echo ---------------------------------------- >> "%LOG_FILE%"
