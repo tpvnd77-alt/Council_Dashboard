@@ -17,23 +17,33 @@ cd /d "%SCRIPT_DIR%"
 REM 0. 텔레그램 봇 다운로드 폴더로부터 신규 PDF 동기화
 xcopy /d /y "C:\Users\hp\.gemini\antigravity\scratch\telegram_bot_dashboard\bots\bills_council\pdf_22nd\*.pdf" "C:\Users\hp\bills_council\pdf_22nd\" >> "%LOG_FILE%" 2>&1
 
-REM 1. 로컬 JSON 빌드 (Fallback 및 Github Pages용)
+REM 1. Build local JSON for Github Pages (this is what the dashboard reads)
 %PYTHON% -X utf8 "%SCRIPT_DIR%\parse_pdfs.py" >> "%LOG_FILE%" 2>&1
+SET PARSE_RC=%ERRORLEVEL%
 
-REM 2. Supabase 클라우드 데이터베이스 업데이트
+REM 2. Supabase sync. Independent of the Github Pages deploy on purpose:
+REM    the published dashboard reads data/meetings.json only, so a Supabase
+REM    outage must not block deployment. (2026-09-27 ~ 10-02: it did, 6 days.)
 %PYTHON% -X utf8 "%SCRIPT_DIR%\scripts\parse_to_supabase.py" >> "%LOG_FILE%" 2>&1
+SET SUPABASE_RC=%ERRORLEVEL%
 
-IF %ERRORLEVEL% EQU 0 (
-    echo [%DATE% %TIME%] 업데이트 성공 -> 클라우드 업로드 시작 >> "%LOG_FILE%"
-    
-    REM Git 배포 자동화 실행
+REM 3. Deploy. Gated on parse_pdfs only.
+IF %PARSE_RC% EQU 0 (
+    echo [%DATE% %TIME%] parse_pdfs OK - deploying >> "%LOG_FILE%"
     %GIT% add data/meetings.json pdf/ >> "%LOG_FILE%" 2>&1
     %GIT% commit -m "Auto database and PDF update: %DATE% %TIME%" >> "%LOG_FILE%" 2>&1
     %GIT% push origin main >> "%LOG_FILE%" 2>&1
-    
-    echo [%DATE% %TIME%] 클라우드 업로드 성공 >> "%LOG_FILE%"
+    IF ERRORLEVEL 1 (
+        echo [%DATE% %TIME%] DEPLOY FAILED - git push returned an error >> "%LOG_FILE%"
+    ) ELSE (
+        echo [%DATE% %TIME%] DEPLOY OK >> "%LOG_FILE%"
+    )
 ) ELSE (
-    echo [%DATE% %TIME%] 업데이트 실패 (오류코드: %ERRORLEVEL%) >> "%LOG_FILE%"
+    echo [%DATE% %TIME%] DEPLOY SKIPPED - parse_pdfs failed rc=%PARSE_RC% >> "%LOG_FILE%"
+)
+
+IF NOT %SUPABASE_RC% EQU 0 (
+    echo [%DATE% %TIME%] WARNING supabase sync failed rc=%SUPABASE_RC% - Github Pages is still current >> "%LOG_FILE%"
 )
 
 echo ---------------------------------------- >> "%LOG_FILE%"
