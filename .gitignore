@@ -17,3 +17,5 @@ Thumbs.db
 
 # 로컬 환경 변수 파일 제외
 .env
+.env*
+*.bak-*
