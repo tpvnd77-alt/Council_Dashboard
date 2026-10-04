@@ -27,10 +27,26 @@ except ImportError:
 # === 설정 ===
 PDF_DIR    = r"C:\Users\hp\bills_council\pdf_22nd"
 OUTPUT_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings.json"
+# 2026-10-04: 통짜 meetings.json 이 79MB 가 되어 둘로 쪼갰다.
+#   index.json      - 목록 화면이 받는 것. 발언 원문(speakers[].lines)을 뺀 나머지 (~1.3MB)
+#   meetings/<id>.json - 회의 한 건의 전체. 상세보고서를 열거나 검색할 때만 받는다 (~270KB)
+# meetings.json 도 당분간 같이 쓴다. 새 구조가 어긋나면 app.js 만 되돌리면 되게.
+INDEX_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\index.json"
+DETAIL_DIR = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings"
+WRITE_LEGACY_MEETINGS_JSON = True   # 새 구조가 안정되면 False 로
+
+
+def detail_id(filename):
+    """상세 파일 이름. 회의록 파일명에 한글·괄호·공백이 섞여 있어 URL 로 쓰기 나쁘다."""
+    import hashlib
+    return hashlib.sha1(filename.encode("utf-8")).hexdigest()[:16]
 MAX_PAGES  = 1000
 MAX_WORKERS = 6
 # 파서를 고치면 이 숫자를 올린다. meetings.json 의 캐시가 무효가 되어 전체를 다시 읽는다.
 PARSER_VERSION = 4
+# 3 에서 4 로 올린 것은 파싱 로직을 바꿔서가 아니다. 2026-10-04 에 실수로 올렸다가
+# 되돌리는 사이 자동 배치가 한 번 돌아 캐시가 4 로 적혔고, 그 상태로 182개를 다시
+# 읽었다. 내용은 3 과 같으므로 4 에 맞춰 둔다. 재파싱 40분을 아끼기 위함이다.
 # 회의당 저장할 발언자 수. 25 이던 것을 40 으로 올렸다(2026-09-08).
 # 증인·참고인이 제대로 잡히면서 25위 밖으로 밀려 대시보드에서 사라지는 사람이 생겼다.
 MAX_SPEAKERS_PER_MEETING = 40
@@ -1404,8 +1420,21 @@ def main():
     output_path = Path(OUTPUT_PATH)
     
     # 캐시된 회의록 불러오기 (이미 파싱된 데이터 재사용을 통해 속도 향상)
+    # 캐시: 전에 파싱해 둔 결과를 다시 쓴다. 상세 파일을 먼저 보고, 없으면 옛
+    # 통짜 meetings.json 을 본다. 상세 파일 쪽을 먼저 보는 까닭은, 나중에
+    # WRITE_LEGACY_MEETINGS_JSON 을 끄더라도 캐시가 그대로 살아 있게 하기 위함이다.
     existing_meetings = {}
-    if output_path.exists():
+    detail_dir_in = Path(DETAIL_DIR)
+    if detail_dir_in.exists():
+        for p in detail_dir_in.glob("*.json"):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    m = json.load(f)
+                if m.get("filename"):
+                    existing_meetings[m["filename"]] = m
+            except Exception:
+                pass
+    if not existing_meetings and output_path.exists():
         try:
             with open(output_path, 'r', encoding='utf-8') as f:
                 old_db = json.load(f)
@@ -1479,14 +1508,48 @@ def main():
         "errors": errors,
     }
 
+    data_dir = Path(INDEX_PATH).parent
+    data_dir.mkdir(parents=True, exist_ok=True)
+    detail_dir = Path(DETAIL_DIR)
+    detail_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) 회의별 상세 파일. 발언 원문이 여기 있다.
+    wanted = set()
+    for m in meetings:
+        did = detail_id(m["filename"])
+        m["detail"] = did
+        wanted.add(did + ".json")
+        with open(detail_dir / (did + ".json"), 'w', encoding='utf-8') as f:
+            json.dump(m, f, ensure_ascii=False, separators=(',', ':'))
+    # 회의록이 빠졌으면 남은 상세 파일도 치운다
+    for stale in detail_dir.glob("*.json"):
+        if stale.name not in wanted:
+            stale.unlink()
+            safe_print(f"  (정리) 남은 상세 파일 삭제: {stale.name}")
+
+    # 2) 목록용 index. speakers 에서 lines 만 덜어 낸다.
+    light = []
+    for m in meetings:
+        lm = {k: v for k, v in m.items() if k != "speakers"}
+        lm["speakers"] = [{k: v for k, v in s.items() if k != "lines"}
+                          for s in (m.get("speakers") or [])]
+        light.append(lm)
+    index = dict(db, meetings=light)
+    with open(Path(INDEX_PATH), 'w', encoding='utf-8') as f:
+        json.dump(index, f, ensure_ascii=False, separators=(',', ':'))
+
+    # 3) 되돌릴 자리를 남겨 두는 통짜 파일
     output_path = Path(OUTPUT_PATH)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
+    if WRITE_LEGACY_MEETINGS_JSON:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+    elif output_path.exists():
+        output_path.unlink()
 
-    size_kb = output_path.stat().st_size // 1024
-    safe_print(f"\n완료! {len(meetings)}개 / 오류 {len(errors)}개 / {size_kb}KB")
-
+    idx_kb = Path(INDEX_PATH).stat().st_size // 1024
+    det_kb = sum(p.stat().st_size for p in detail_dir.glob("*.json")) // 1024
+    legacy = f" / meetings.json {output_path.stat().st_size // 1024}KB" if output_path.exists() else ""
+    safe_print(f"\n완료! {len(meetings)}개 / 오류 {len(errors)}개 / index {idx_kb}KB + 상세 {len(meetings)}개 {det_kb}KB{legacy}")
 
 if __name__ == "__main__":
     main()

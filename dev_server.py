@@ -13,6 +13,36 @@ if sys.platform == 'win32':
 
 PORT = 3000
 LOCAL_JSON_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings.json"
+# 2026-10-04: meetings.json 을 index.json + meetings/<id>.json 으로 쪼갰다.
+# 통짜 파일이 아직은 같이 만들어지지만, 나중에 그것을 끄더라도 이 서버가
+# 멀쩡하도록 index + 상세를 합쳐 읽는 길을 둔다.
+INDEX_JSON_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\index.json"
+DETAIL_JSON_DIR = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings"
+
+
+def load_local_db():
+    """통짜 meetings.json 이 있으면 그걸 쓰고, 없으면 index + 상세를 합쳐 돌려준다."""
+    if os.path.exists(LOCAL_JSON_PATH):
+        with open(LOCAL_JSON_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    if not os.path.exists(INDEX_JSON_PATH):
+        return None
+    with open(INDEX_JSON_PATH, 'r', encoding='utf-8') as f:
+        db = json.load(f)
+    for m in db.get("meetings", []):
+        did = m.get("detail")
+        if not did:
+            continue
+        p = os.path.join(DETAIL_JSON_DIR, did + ".json")
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    full = json.load(f)
+                if full.get("speakers"):
+                    m["speakers"] = full["speakers"]
+            except Exception:
+                pass
+    return db
 
 # Load .env file manually if exists
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -580,17 +610,15 @@ class SystemCDevServer(BaseHTTPRequestHandler):
             # ============================================================
             # Local JSON Fallback Mode (Fallback when SUPABASE_DB_URL not set)
             # ============================================================
-            if not os.path.exists(LOCAL_JSON_PATH):
-                encoded_err = json.dumps({"success": False, "message": "meetings.json not found"}).encode('utf-8')
+            data = load_local_db()
+            if data is None:
+                encoded_err = json.dumps({"success": False, "message": "meetings.json / index.json not found"}).encode('utf-8')
                 self.send_response(404)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(encoded_err)))
                 self.end_headers()
                 self.wfile.write(encoded_err)
                 return
-
-            with open(LOCAL_JSON_PATH, 'r', encoding='utf-8') as f:
-                data = json.load(f)
 
             if api_name == 'meetings':
                 filename = query.get('filename', [''])[0]

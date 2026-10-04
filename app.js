@@ -181,9 +181,14 @@ async function loadData() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     } catch (apiErr) {
       console.warn("API fetch 실패, 로컬 JSON Fallback을 시도합니다.", apiErr);
-      // 2. 실패 시 로컬 data/meetings.json 파일 로드 시도 (GitHub Pages 및 오프라인 대비)
-      resp = await fetch('data/meetings.json?v=' + Date.now());
-      if (!resp.ok) throw new Error(`Local Fallback 실패 (API: ${apiErr.message}, JSON: HTTP ${resp.status})`);
+      // 2. 목록용 index.json (발언 원문은 빠져 있다. 1.3MB 남짓)
+      resp = await fetch('data/index.json?v=' + Date.now());
+      if (!resp.ok) {
+        // 3. index 가 없으면 예전 통짜 파일로 (되돌림 대비)
+        console.warn("index.json 없음, 통짜 meetings.json 으로 되돌립니다.");
+        resp = await fetch('data/meetings.json?v=' + Date.now());
+        if (!resp.ok) throw new Error(`Local Fallback 실패 (API: ${apiErr.message}, JSON: HTTP ${resp.status})`);
+      }
     }
     
     STATE.db = await resp.json();
@@ -772,6 +777,56 @@ function createMeetingCard(m, index, query) {
 // ============================================================
 // 2단계: 모달 레이아웃 & 상세 정보 (프로그레스바 적용)
 // ============================================================
+// --- [발언 원문 지연 로딩] -------------------------------------------------
+// index.json 에는 발언 원문(speakers[].lines)이 없다. 목록·필터·달력·발언자
+// 집계는 그것 없이 돌아가고, 원문이 필요한 두 가지 - 상세보고서와 본문 검색 -
+// 만 그때 가서 받는다. 들어와서 목록만 보는 사람은 1.3MB 로 끝난다.
+const CORPUS = { loadedDetails: new Set(), full: false, loading: null };
+
+async function ensureDetail(m) {
+  if (!m || !m.detail || CORPUS.loadedDetails.has(m.detail)) return m;
+  try {
+    const r = await fetch(`data/meetings/${m.detail}.json`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const full = await r.json();
+    if (full && full.speakers) m.speakers = full.speakers;
+    CORPUS.loadedDetails.add(m.detail);
+  } catch (e) {
+    console.warn('상세 로드 실패:', m.filename, e);
+  }
+  return m;
+}
+
+// 본문 검색처럼 모든 회의의 원문이 필요할 때. 한 번만 받고 세션 동안 들고 있는다.
+async function ensureCorpus(onProgress) {
+  if (CORPUS.full) return;
+  if (CORPUS.loading) return CORPUS.loading;
+  CORPUS.loading = (async () => {
+    const targets = (STATE.db?.meetings || []).filter(m => m.detail && !CORPUS.loadedDetails.has(m.detail));
+    if (!targets.length) { CORPUS.full = true; return; }
+    const queue = targets.slice();
+    let done = 0;
+    const worker = async () => {
+      while (queue.length) {
+        await ensureDetail(queue.shift());
+        done++;
+        if (onProgress) onProgress(done, targets.length);
+      }
+    };
+    await Promise.all(Array.from({ length: 8 }, worker));   // 동시 8개
+    CORPUS.full = true;
+  })();
+  try { await CORPUS.loading; } finally { CORPUS.loading = null; }
+}
+
+// 검색 버튼을 누른 사람에게 준비 상태를 보여 준다.
+function corpusProgressInto(el) {
+  if (!el) return null;
+  return (done, total) => {
+    if (done < total) el.textContent = `발언 원문 준비 중... ${done}/${total}`;
+  };
+}
+
 async function openModal(mMetadata) {
   try {
     const overlay = document.getElementById('modal-overlay');
@@ -818,6 +873,8 @@ async function openModal(mMetadata) {
       console.warn("API 상세 정보 fetch 실패. 로컬 STATE.db.meetings 검색을 시도합니다.", apiErr);
       if (STATE.db && STATE.db.meetings) {
         m = STATE.db.meetings.find(x => x.filename === mMetadata.filename);
+        // index.json 으로 떴다면 발언 원문이 아직 없다. 이 회의 것만 받아 온다.
+        if (m) await ensureDetail(m);
       }
       if (!m) {
         throw new Error(`상세 데이터를 불러올 수 없습니다: ${apiErr.message}`);
@@ -1709,7 +1766,7 @@ function initSpeakerTab() {
   speakerSearch.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       const val = speakerSearch.value.trim();
-      searchSpeakerTab(val);
+      searchSpeakerTab(val);   // async - 발언 원문을 받아야 할 수 있다
     }
   });
 
@@ -1939,7 +1996,14 @@ function renderSpeakersOverview(selectedMeeting = null) {
 // ============================================================
 // 발언자 분석 탭 내 통합 검색 및 연동 결과 리스트
 // ============================================================
-function searchSpeakerTab(query) {
+async function searchSpeakerTab(query) {
+  // 발언자 이름만 추리는 데는 index 로 충분하지만, 발언 내용을 뒤지려면
+  // 모든 회의의 원문이 있어야 한다. 처음 검색할 때 한 번만 받는다.
+  if (query && query.trim()) {
+    const statusEl = document.getElementById('speaker-search-result-title')
+                  || document.getElementById('speaker-list');
+    await ensureCorpus(corpusProgressInto(statusEl));
+  }
   const searchResultsEl = document.getElementById('speaker-search-results');
   const overviewHeaderEl = document.getElementById('speakers-overview-header');
   const overviewChartWrapEl = document.getElementById('speakers-overview-chart-wrap');
@@ -2707,6 +2771,10 @@ function renderPopularKeywordTags() {
  * 단일 키워드 검색 및 관련 회의록 리스팅
  */
 async function searchKeyword(keyword, shouldUpdate = true) {
+  // 키워드 탐색기는 발언 원문을 가로질러 뒤진다. 원문을 먼저 확보한다.
+  if (keyword && String(keyword).trim()) {
+    await ensureCorpus(corpusProgressInto(document.getElementById('kw-result-title')));
+  }
   if (!keyword) return;
   
   keyword = keyword.trim();

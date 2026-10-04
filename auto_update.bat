@@ -32,7 +32,10 @@ REM    it back: put a working SUPABASE_DB_URL in .env and restore this step.
 REM 3. Deploy.
 IF %PARSE_RC% EQU 0 (
     echo [%DATE% %TIME%] parse_pdfs OK - deploying >> "%LOG_FILE%"
-    %GIT% add data/meetings.json pdf/ >> "%LOG_FILE%" 2>&1
+    %GIT% add data/index.json data/meetings pdf/ >> "%LOG_FILE%" 2>&1
+    REM meetings.json is the legacy single file, kept only while the split layout
+    REM settles. Harmless once parse_pdfs stops writing it.
+    IF EXIST "%SCRIPT_DIR%\data\meetings.json" %GIT% add data/meetings.json >> "%LOG_FILE%" 2>&1
     %GIT% commit -m "Auto database and PDF update: %DATE% %TIME%" >> "%LOG_FILE%" 2>&1
     %GIT% push origin main >> "%LOG_FILE%" 2>&1
     IF ERRORLEVEL 1 (
@@ -46,4 +49,5 @@ IF %PARSE_RC% EQU 0 (
 
 
 
-echo ---------------------------------------- >> "%LOG_FILE%"
+echo ---------------------------------------- >> "%LOG_FILE%"
+
