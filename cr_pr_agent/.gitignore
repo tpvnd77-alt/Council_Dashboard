@@ -1,0 +1,7 @@
+# Decision Log·피드백 리포트·워크북에는 대외비가 담긴다 — 저장소에 올리지 않는다
+data/*
+!data/.gitkeep
+inbox/*
+!inbox/README.md
+golden/candidates/*.json
+prompts/archive/

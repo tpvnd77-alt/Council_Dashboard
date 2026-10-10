@@ -1,0 +1,37 @@
+{
+  "_comment": "05_Code_Book — 점수 척도는 '높을수록 위험(5=치명)'을 표준으로 확정(부록 A #1). 가중치는 연 1회 조직장 승인.",
+  "weights": {"SCORE_REG": 0.35, "SCORE_PR": 0.25, "SCORE_FIN": 0.25, "SCORE_LEG": 0.15},
+  "score_scale": {
+    "5": "치명적 — 사업 인가 취소·핵심 사업 금지 / 연간 수천억 원 규모",
+    "4": "심각한 위협 — 직접 제재·의무 부과 임박 / 수백억 원 규모",
+    "3": "보통(주의) — 논의 진행 중, 방향 미정 / 수십억 원 또는 불확실",
+    "2": "경미한 영향 — 간접 영향, 장기 모니터링",
+    "1": "영향 없음 — 당사와 무관하거나 우호적"
+  },
+  "opportunity_scale": {
+    "5": "판을 바꿀 기회 — 제도·시장 구조를 당사에 유리하게 재설계",
+    "4": "큰 기회 — 신규 사업·수익원 또는 협상 지렛대 확보",
+    "3": "보통 — 거래 카드로 활용 가능",
+    "2": "작은 기회",
+    "1": "기회 없음"
+  },
+  "levels": [
+    {"level": "CRITICAL", "grade": "1등급", "min": 80, "report": "CEO 보고", "principle": "당일 보고, 조직장 직접 대응, D+1 액션 필수", "due_days": 1},
+    {"level": "HIGH", "grade": "2등급", "min": 60, "report": "임원 전결", "principle": "3일 내 대응 방향 확정", "due_days": 3},
+    {"level": "MEDIUM", "grade": "3등급", "min": 40, "report": "부서 간 조율", "principle": "주간 단위 관리", "due_days": 7},
+    {"level": "LOW", "grade": "4등급", "min": 0, "report": "단순 모니터링", "principle": "월간 동향 정리에 포함", "due_days": 30}
+  ],
+  "report_levels": ["CEO 보고", "임원 전결", "부서 간 조율", "단순 모니터링"],
+  "distribution": {
+    "CEO 보고": {"to": "CEO, 담당 임원, 조직장", "format": "원페이지 보고서 + CEO 예상 질문", "when": "조직장 승인 즉시"},
+    "임원 전결": {"to": "담당 임원, 조직장", "format": "원페이지 보고서", "when": "승인 후 당일"},
+    "부서 간 조율": {"to": "관련 부서장, 담당자", "format": "핵심 내용 + Action Plan 발췌", "when": "주간 회의 전"},
+    "단순 모니터링": {"to": "담당자", "format": "Decision Log 행 + 대시보드", "when": "월간 동향 정리"}
+  },
+  "opportunity_uplift_threshold": 4,
+  "source_types": ["정부부처", "국회", "경쟁사", "언론", "사내보고서"],
+  "statuses": ["신규접수", "분석완료", "대응중", "종결"],
+  "final_decisions": ["승인", "수정 채택", "기각"],
+  "classification_confidence_threshold": 0.7,
+  "dday_alert_days": [3, 0]
+}
