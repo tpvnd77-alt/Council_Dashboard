@@ -17,6 +17,13 @@ cd /d "%SCRIPT_DIR%"
 REM 0. 텔레그램 봇 다운로드 폴더로부터 신규 PDF 동기화
 xcopy /d /y "C:\Users\hp\.gemini\antigravity\scratch\telegram_bot_dashboard\bots\bills_council\pdf_22nd\*.pdf" "C:\Users\hp\bills_council\pdf_22nd\" >> "%LOG_FILE%" 2>&1
 
+REM 0b. 국정감사 회의록 확인. 봇이 긁는 과방위 페이지에는 국정감사가
+REM     올라오지 않아 국회회의록시스템에서 따로 받는다. 갓 끝난 국감은
+REM     '임시회의록' 으로 먼저 올라오고 몇 달 뒤 정식본으로 바뀌는데,
+REM     그때 알아서 갈아끼우고 관리자 채팅으로 한 줄 알린다.
+REM     이 단계가 실패해도 배포를 막지 않는다 - PARSE_RC 는 아래 parse_pdfs 것만 본다.
+%PYTHON% -X utf8 "C:\Users\hp\.gemini\antigravity\scratch\telegram_bot_dashboard\bots\bills_council\collect_audit.py" >> "%LOG_FILE%" 2>&1
+
 REM 1. Build local JSON for Github Pages (this is what the dashboard reads)
 %PYTHON% -X utf8 "%SCRIPT_DIR%\parse_pdfs.py" >> "%LOG_FILE%" 2>&1
 SET PARSE_RC=%ERRORLEVEL%
