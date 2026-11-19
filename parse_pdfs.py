@@ -1071,22 +1071,40 @@ def extract_speech_summary(speakers_dict, date, title, agendas, keywords, speake
 
     # 2. 총평 (Executive Summary) 추출
     full_context = " ".join([" ".join([line["text"] for line in lines]) for lines in speakers_dict.values()])
+    # 회의 종류는 제목에서 가려낸다. 본문에 '청문회'·'공청회' 라는 말이 한 번
+    # 스쳤다고 그 회의가 인사청문회인 것은 아니다. 이것 때문에 국정감사 20건 중
+    # 17건을 비롯해 모두 30건이 '◯◯ 후보자 인사청문회' 로 둔갑해 있었다.
+    # 2026.10.12. 국정감사가 '이진숙 후보자 인사청문회' 로 나온 것이 그 예다 -
+    # 이진숙은 후보자가 아니라 이 위원회 위원이고, 그날은 국정감사였다.
+    head = title or ""
+    is_audit = "국정감사" in head
+    is_hearing = "인사청문" in head
+    is_forum = "공청회" in head
+
     summary_sentence = "금일 회의는 주요 현안 법안 상정 및 피질의 기관 정책 모니터링이 집중적으로 이루어짐."
-    if agendas:
-        summary_sentence = f"금일 회의는 **{agendas[0]}** 등 상정된 주요 현안 의안들에 대한 심사 및 정책 대안 검토가 중점적으로 논의됨."
-    elif top_kws:
-        if "공청회" in full_context or "인사청문회" in full_context or "청문회" in full_context:
-            person = "소관"
-            for name in ["이진숙", "유상임", "김홍일", "이동관", "박장범", "임명현"]:
-                if name in full_context:
-                    person = name
-                    break
-            if "청문회" in full_context or "인사청문회" in full_context:
-                summary_sentence = f"금일 회의는 **{person} 후보자 인사청문회**로서, 후보자의 자격 검증 및 주요 현안에 대한 집중 질의가 진행됨."
-            else:
-                summary_sentence = f"금일 회의는 **{top_kws[0]}** 관련 주요 법률안 제정을 위한 **공청회**로서, 산업계 및 학계 진술인들의 심도 깊은 의견 청취가 교차함."
+    if is_hearing:
+        person = "소관"
+        for name in ["이진숙", "유상임", "김홍일", "이동관", "박장범", "임명현"]:
+            if name in full_context:
+                person = name
+                break
+        summary_sentence = f"금일 회의는 **{person} 후보자 인사청문회**로서, 후보자의 자격 검증 및 주요 현안에 대한 집중 질의가 진행됨."
+    elif is_forum:
+        kw = top_kws[0] if top_kws else "소관 법률안"
+        summary_sentence = f"금일 회의는 **{kw}** 관련 주요 법률안 제정을 위한 **공청회**로서, 산업계 및 학계 진술인들의 심도 깊은 의견 청취가 교차함."
+    elif is_audit:
+        if len(top_kws) >= 2:
+            summary_sentence = f"금일 회의는 **{top_kws[0]}** 및 **{top_kws[1]}** 등 소관 정책 아젠다에 대한 **국정감사** 현안질의 및 질타가 격렬하게 교차함."
+        elif top_kws:
+            summary_sentence = f"금일 회의는 **{top_kws[0]}** 등 소관 정책 아젠다에 대한 **국정감사** 현안질의 및 질타가 격렬하게 교차함."
         else:
-            summary_sentence = f"금일 회의는 **{top_kws[0]}** 및 **{top_kws[1]}** 등 소관 정책 아젠다에 대한 위원회 차원의 현안질의 및 질타가 격렬하게 교차함."
+            summary_sentence = "금일 회의는 소관 기관 정책 전반에 대한 **국정감사** 현안질의 및 질타가 격렬하게 교차함."
+    elif agendas:
+        summary_sentence = f"금일 회의는 **{agendas[0]}** 등 상정된 주요 현안 의안들에 대한 심사 및 정책 대안 검토가 중점적으로 논의됨."
+    elif len(top_kws) >= 2:
+        summary_sentence = f"금일 회의는 **{top_kws[0]}** 및 **{top_kws[1]}** 등 소관 정책 아젠다에 대한 위원회 차원의 현안질의 및 질타가 격렬하게 교차함."
+    elif top_kws:
+        summary_sentence = f"금일 회의는 **{top_kws[0]}** 등 소관 정책 아젠다에 대한 위원회 차원의 현안질의가 교차함."
 
     # 전체 turns 복원 및 idx 오름차순 정렬
     all_lines = []
