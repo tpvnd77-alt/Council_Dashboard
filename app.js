@@ -827,6 +827,13 @@ function corpusProgressInto(el) {
   };
 }
 
+// 모달 안의 요소는 뷰를 바꾸면 사라졌다 다시 생긴다. 없을 때 조용히 넘어간다.
+function setModalHTML(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+  return el;
+}
+
 async function openModal(mMetadata) {
   try {
     const overlay = document.getElementById('modal-overlay');
@@ -854,12 +861,16 @@ async function openModal(mMetadata) {
       <span>📏 회의록 분량: ${(mMetadata.text_length || 0).toLocaleString()}자</span>
     `;
 
-    // Show loading in sub components
-    document.getElementById('modal-agendas').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>';
-    document.getElementById('modal-speakers').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>';
-    document.getElementById('modal-sidebar-keywords').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>';
-    document.getElementById('modal-summary').innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">보고서 불러오는 중...</div>';
-    document.getElementById('modal-keywords').innerHTML = '';
+    // modal-summary 와 modal-keywords 는 dynamic-viewer-container 안에 산다.
+    // 모달 안에서 '발언 의원'·'키워드' 같은 다른 뷰로 넘어가면 그 컨테이너가
+    // 통째로 교체되면서 두 요소가 사라진다. 그 상태로 모달을 닫고 다른 회의를
+    // 열면 여기서 null.innerHTML 로 터졌다 (2026-11-19). 본문은 아래 원래
+    // 뷰를 다시 그릴 때 어차피 채워지므로, 없으면 건너뛰면 된다.
+    setModalHTML('modal-agendas', '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>');
+    setModalHTML('modal-speakers', '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>');
+    setModalHTML('modal-sidebar-keywords', '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">불러오는 중...</div>');
+    setModalHTML('modal-summary', '<div style="color:var(--text-tertiary);font-size:12px;padding:16px;text-align:center;">보고서 불러오는 중...</div>');
+    setModalHTML('modal-keywords', '');
 
     // Fetch full meeting detail
     let m;
@@ -1215,7 +1226,8 @@ async function openModal(mMetadata) {
     const matchedSpk = m.speakers.find(s => s.name === spkName);
     if (!matchedSpk || !matchedSpk.lines || matchedSpk.lines.length === 0) {
       backBtn.onclick();
-      const allLines = document.getElementById('modal-summary').querySelectorAll('div, h3, h4');
+      const summaryEl = document.getElementById('modal-summary');
+      const allLines = summaryEl ? summaryEl.querySelectorAll('div, h3, h4') : [];
       allLines.forEach(el => el.classList.remove('speaker-qa-highlight'));
       let firstEl = null;
       allLines.forEach(el => {
