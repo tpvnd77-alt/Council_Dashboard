@@ -45,7 +45,7 @@ def detail_id(filename):
 MAX_PAGES  = 1000
 MAX_WORKERS = 6
 # 파서를 고치면 이 숫자를 올린다. meetings.json 의 캐시가 무효가 되어 전체를 다시 읽는다.
-PARSER_VERSION = 4
+PARSER_VERSION = 5   # 2026-11-19 쪽머리 줄을 버리도록 바꿔 전체 재파싱
 # 3 에서 4 로 올린 것은 파싱 로직을 바꿔서가 아니다. 2026-10-04 에 실수로 올렸다가
 # 되돌리는 사이 자동 배치가 한 번 돌아 캐시가 4 로 적혔고, 그 상태로 182개를 다시
 # 읽었다. 내용은 3 과 같으므로 4 에 맞춰 둔다. 재파싱 40분을 아끼기 위함이다.
@@ -456,6 +456,20 @@ def parse_marker_line(content):
     return "", 0
 
 
+# 회의록 PDF 의 쪽머리. 한 줄을 통째로 차지하고, 쪽번호가 앞에 붙기도 뒤에
+# 붙기도 한다. 발언 가운데 끼어들어 그대로 발언 본문이 되어 있었다.
+#   '2024년도국감-과학기술정보방송통신(2024년10월8일) 3'
+#   '4 2024년도국감-과학기술정보방송통신(2024년10월8일)'
+#   '제433회-과학기술정보방송통신제1차(2026년3월11일) 23'
+# 줄 전체에 못을 박았으므로 본문을 깎을 일은 없다. 말뭉치 486,019줄에
+# 대 보면 3,187줄이 걸리고 놓치는 것은 없었다.
+PAGE_HEADER_LINE = re.compile(
+    r'^\d{0,4}\s*'
+    r'(?:제\d+회|\d{4}년도국감)-과학기술정보방송통신'
+    r'(?:소위)?(?:제\d+차)?(?:\([^)]{0,20}\))?'
+    r'\s*\d{0,4}$')
+
+
 def extract_speakers_and_text_with_page(page_texts):
     """발언자 추출. 페이지 번호를 유지하며 ◯/○ 패턴으로 매칭합니다."""
     speakers = {}
@@ -467,6 +481,8 @@ def extract_speakers_and_text_with_page(page_texts):
         for line in text.split('\n'):
             line = line.strip()
             if not line:
+                continue
+            if PAGE_HEADER_LINE.match(line):
                 continue
             global_line_idx += 1
 
