@@ -33,7 +33,9 @@ OUTPUT_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\m
 # meetings.json 도 당분간 같이 쓴다. 새 구조가 어긋나면 app.js 만 되돌리면 되게.
 INDEX_PATH = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\index.json"
 DETAIL_DIR = r"C:\Users\hp\.gemini\antigravity\scratch\council_dashboard\data\meetings"
-WRITE_LEGACY_MEETINGS_JSON = True   # 새 구조가 안정되면 False 로
+WRITE_LEGACY_MEETINGS_JSON = False  # 2026-11-19 끔. 95MB 까지 커져서
+# GitHub 한 파일 100MB 벽에 4MB 밖에 안 남았다. 웹은 index.json + data/meetings/
+# 를 읽으므로 이 통짜 파일은 쓰이지 않는다. 되살리려면 True 로.
 
 
 def detail_id(filename):

@@ -19,3 +19,7 @@ Thumbs.db
 .env
 .env*
 *.bak-*
+
+# 통짜 meetings.json 은 2026-11-19 부터 쓰지 않는다 (95MB, GitHub 100MB 벽).
+# 웹은 data/index.json + data/meetings/ 를 읽는다.
+data/meetings.json
